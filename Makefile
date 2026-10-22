@@ -11,6 +11,7 @@
 #   make shared      # 产出 build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
 #   make cp1 / cp2   # Checkpoint gate（不计分，没过不准进下一段）
 #   make capstone    # C1–C4 结业验收
+#   make asan/tsan   # sanitizer 构建（ASan 抓越界，TSan 抓数据竞争）
 #   make clean
 #
 # 注意：-MMD -MP + -include 不能省。头文件改动必须触发重编。
@@ -41,7 +42,7 @@ TESTSRC   := $(wildcard test/*_test.cpp)
 TESTBIN   := $(patsubst test/%_test.cpp,build/%_test,$(TESTSRC))
 TESTNAMES := $(patsubst test/%_test.cpp,%,$(TESTSRC))
 
-.PHONY: all build test grade clean probe probe-link shared cp1 cp2 capstone
+.PHONY: all build test grade clean probe probe-link shared cp1 cp2 capstone asan tsan
 
 all: test
 
@@ -126,6 +127,22 @@ cp1: $(LIB)
 
 cp2: $(LIB)
 	@bash scripts/checkpoint.sh 2
+
+# sanitizer 构建：P4/T4.2 要求「TSan 跑干净」，P2 的 reconcile/eviction 用 ASan 抓越界。
+# ★ 会先 clean、把 sanitizer 版本编进 build/，跑完请再 make clean 回到正常构建。
+asan:
+	@echo "!! sanitizer 构建：跑完请 make clean"
+	@$(MAKE) --no-print-directory clean
+	@$(MAKE) --no-print-directory test \
+	  CXXFLAGS="$(CXXFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer" \
+	  LDFLAGS="$(LDFLAGS) -fsanitize=address,undefined"
+
+tsan:
+	@echo "!! sanitizer 构建：跑完请 make clean"
+	@$(MAKE) --no-print-directory clean
+	@$(MAKE) --no-print-directory test \
+	  CXXFLAGS="$(CXXFLAGS) -fsanitize=thread -fno-omit-frame-pointer" \
+	  LDFLAGS="$(LDFLAGS) -fsanitize=thread"
 
 # 结业验收：C1 runner 全家桶 / C2 wt 工具 / C3 对照组 / C4 leaderboard
 capstone: $(TESTBIN)

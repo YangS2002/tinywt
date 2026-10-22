@@ -22,9 +22,34 @@ set -u
 
 cd "$(dirname "$0")/.." || exit 2
 
-WT_SRC="${WT_SRC:-external/wiredtiger}"
-WTPERF="${WTPERF:-$WT_SRC/build/bench/wtperf/wtperf}"
-WT_BIN="${WT_BIN:-$WT_SRC/build/wt}"
+# 源码位置：fetch 脚本的默认落点（third_party/wt）优先，其次完整克隆（external/wiredtiger）
+if [ -z "${WT_SRC:-}" ]; then
+    if [ -d third_party/wt ]; then
+        WT_SRC=third_party/wt
+    else
+        WT_SRC=external/wiredtiger
+    fi
+fi
+
+find_bin() {
+    local cand
+    for cand in "$@"; do
+        if [ -x "$cand" ]; then
+            printf '%s' "$cand"
+            return 0
+        fi
+    done
+    printf '%s' "$1"
+    return 1
+}
+
+if [ -z "${WTPERF:-}" ]; then
+    WTPERF=$(find_bin "$WT_SRC/build/bench/wtperf/wtperf" "$WT_SRC/bench/wtperf/wtperf" \
+        "$WT_SRC/build/wtperf" "third_party/wt/build/wtperf") || true
+fi
+if [ -z "${WT_BIN:-}" ]; then
+    WT_BIN=$(find_bin "$WT_SRC/build/wt" "$WT_SRC/wt" "third_party/wt/build/wt") || true
+fi
 RUNNERS_DIR="$WT_SRC/bench/wtperf/runners"
 SHLIB="$PWD/build/libwiredtiger.so"
 RESULT_DIR="$PWD/bench/results"
@@ -70,7 +95,8 @@ say "=================================================================="
 say
 say "[C1] runner 全家桶"
 if [ ! -x "$WTPERF" ]; then
-    say "  SKIP  找不到 $WTPERF（先 scripts/fetch_wt_sources.sh + 编 WT）"
+    say "  SKIP  找不到 wtperf（已按候选路径查找：$WT_SRC/build/bench/wtperf/wtperf 等）"
+    say "        → scripts/fetch_wt_sources.sh 拉源码，或 WT_SRC=/path/to/wiredtiger 指向完整克隆"
     skip=$((skip + 1))
 elif ! make -s shared; then
     say "  FAIL  build/libwiredtiger.so 编不出来"

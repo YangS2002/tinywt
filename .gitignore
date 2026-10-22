@@ -16,3 +16,6 @@ third_party/
 
 # Capstone 运行时产物
 bench/results/
+
+# 完整 WT 克隆（可选，WT_SRC 指向这里）
+external/

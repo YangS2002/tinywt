@@ -72,6 +72,31 @@ mk_upd(u64 start, u64 stop, u64 durable, Update *next = nullptr, bool prepared =
     return u;
 }
 
+/*
+ * UpdOwner --
+ *     测试自己造出来的 Update 链的所有权。
+ *
+ * 为什么需要它：
+ *   Page 的析构在骨架里是 TODO（学生实现后才释放链）。于是同一段测试代码
+ *   在「骨架」和「已实现」两种状态下必须都不泄漏、不双重释放。
+ *   做法：本对象在 Page **之后**声明 → 先于 Page 析构 → 先把链从 entry 上
+ *   摘掉（Page 析构就看不到它），再自己 delete。异常展开时同样生效
+ *   （CHECK_ST 命中 UNIMPLEMENTED 会抛出，不靠语句顺序收尾）。
+ */
+struct UpdOwner {
+    Page &page;
+    std::vector<Update *> owned;
+
+    explicit UpdOwner(Page &p) : page(p) {}
+    ~UpdOwner()
+    {
+        for (Entry &e : page.entries)
+            e.upd = nullptr;
+        for (Update *u : owned)
+            delete u;
+    }
+};
+
 } /* namespace */
 
 /* ---------------------------------------------------------------- 1. History Store */
@@ -290,16 +315,23 @@ test_watermark()
     {
         Page page;
         page.type = PAGE_ROW_LEAF;
+        UpdOwner own(page); /* 声明在 page 之后 → 析构在 page 之前 */
 
         Entry e1;
         e1.key = key_of("a");
         /* 链头是最新的：20，下面还有 10 */
-        e1.upd = mk_upd(20, 0, 20, mk_upd(10, 20, 5));
+        Update *u10 = mk_upd(10, 20, 5);
+        Update *u20 = mk_upd(20, 0, 20, u10);
+        own.owned.push_back(u20);
+        own.owned.push_back(u10);
+        e1.upd = u20;
         page.entries.push_back(e1);
 
         Entry e2;
         e2.key = key_of("b");
-        e2.upd = mk_upd(30, 40, 30);
+        Update *u30 = mk_upd(30, 40, 30);
+        own.owned.push_back(u30);
+        e2.upd = u30;
         page.entries.push_back(e2);
 
         TimeWindow agg;

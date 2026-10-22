@@ -31,6 +31,21 @@ struct Config {
     u32 alloc_size = 4096;
     bool verbose = false;
 
+    /*
+     * --- P3/T3.1 要接进来的建表配置（session->create 的 config 串） ---
+     *
+     * ★ 这里是「字节上限」和「条目上限」两种口径并存：
+     *   P2 的测试用 max_leaf_entries 直接控制页大小（好断言、好对拍）；
+     *   T3.1 的 `create` 拿到的是 leaf_page_max=32KB 这种字节数，必须换算。
+     *   换算规则（T3.1 实现时写死并注释）：
+     *     entries ≈ leaf_page_max / 平均 cell 大小（key + value + 4B 描述符）
+     *   或者反过来：reconcile 时按累计字节数判满，让 max_leaf_entries 只做兜底。
+     *   两种都行，但不能把 leaf_page_max 当条目数直接用 —— 差值一个数量级。
+     */
+    size_t leaf_page_max = 32 * 1024;     /* 默认与真 WT 一致 */
+    size_t internal_page_max = 4 * 1024;  /* 默认与真 WT 一致 */
+    u32 split_pct = 90;                   /* 分裂时左页占的百分比，真 WT 默认 90 */
+
     /* --- P2/T2.6 编码家族 --- */
     bool internal_key_truncate = true; /* suffix compression：internal key 截断 */
     bool use_overflow = true;          /* 超长 key/value 写独立块 */

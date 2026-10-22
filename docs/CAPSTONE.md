@@ -27,12 +27,16 @@ make capstone     # 判「真工具面」：C1 runner / C2 wt / C3 对照组 / C
 
 | 依赖 | 放置位置（默认） | 来源 |
 |---|---|---|
-| 真 WiredTiger 源码 | `external/wiredtiger` | `scripts/fetch_wt_sources.sh` |
-| `wtperf` 可执行 | `$WT_SRC/build/bench/wtperf/wtperf` | WT 官方 cmake 流程 |
+| 真 WiredTiger 源码 | `third_party/wt`（或 `external/wiredtiger`） | `scripts/fetch_wt_sources.sh` |
+| `wtperf` 可执行 | `$WT_SRC/build/bench/wtperf/wtperf` 等（脚本会按候选路径找） | WT 官方 cmake 流程 |
 | `wt` 可执行 | `$WT_SRC/build/wt` | 同上 |
 | tinywt 共享库 | `build/libwiredtiger.so` | `make shared` |
 
 可用环境变量覆盖：`WT_SRC`、`WTPERF`、`WT_BIN`、`ICCOUNT`。
+
+> 两个脚本（`checkpoint.sh` / `capstone.sh`）默认按「`third_party/wt` 存在就用它，
+> 否则用 `external/wiredtiger`」决定源码根目录，再在几个常见位置里找二进制。
+> 完整克隆时 `WT_SRC=/path/to/wiredtiger` 显式指定更省事。
 
 ### drop-in 是怎么生效的
 

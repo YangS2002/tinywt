@@ -22,6 +22,7 @@ make probe-link   # 链接期契约：缺哪个接口，链接器就报哪个符
 make cp1 / cp2    # Checkpoint gate（过了才准进下一段）
 make shared       # build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
 make capstone     # C1–C4 结业验收
+make asan / tsan  # sanitizer 构建（ASan 抓越界，TSan 抓数据竞争；跑完 make clean）
 ```
 
 骨架初始状态：
@@ -83,7 +84,7 @@ src_c/        C ABI 层（extern "C"，包 C++ 内核）
 compat/       真 wiredtiger.h（生成物）+ probe.c（契约探针）
 test/         harness.hpp + pN_*_test.cpp（不要改）
 scripts/      grade.py、checkpoint.sh、capstone.sh、gen_wiredtiger_h.py、fetch_wt_sources.sh
-docs/         PROJECTS.md / P3.md / P4.md / CAPSTONE.md / WT-NOTES.md
+docs/         PROJECTS.md / P0–P4.md / CAPSTONE.md / LEADERBOARD.md / WT-NOTES.md
 ```
 
 ## 执行顺序（不可跳步）

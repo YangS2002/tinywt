@@ -76,12 +76,36 @@ fi
 # ---------------------------------------------------------------- 门 3：真 wtperf
 echo
 echo "[3/3] 真 wtperf（drop-in libwiredtiger.so）"
-WT_SRC="${WT_SRC:-external/wiredtiger}"
+
+# 两种放法都认：
+#   (a) scripts/fetch_wt_sources.sh 拉的子集 → third_party/wt
+#   (b) 完整 WT 克隆 + cmake 构建          → external/wiredtiger（或 WT_SRC 指定）
+if [ -n "${WT_SRC:-}" ]; then
+    :
+elif [ -d third_party/wt ]; then
+    WT_SRC=third_party/wt
+else
+    WT_SRC=external/wiredtiger
+fi
+
+# wtperf 的位置随放法不同，按候选顺序找第一个可执行的
+if [ -z "${WTPERF:-}" ]; then
+    for c in "$WT_SRC/build/bench/wtperf/wtperf" \
+             "$WT_SRC/bench/wtperf/wtperf" \
+             "$WT_SRC/build/wtperf" \
+             "third_party/wt/build/wtperf"; do
+        if [ -x "$c" ]; then
+            WTPERF="$c"
+            break
+        fi
+    done
+fi
 WTPERF="${WTPERF:-$WT_SRC/build/bench/wtperf/wtperf}"
 
 if [ ! -x "$WTPERF" ]; then
-    echo "  SKIP  找不到 $WTPERF"
-    echo "        → scripts/fetch_wt_sources.sh 拉源码，按 WT 官方 cmake 流程编出 wtperf"
+    echo "  SKIP  找不到 wtperf（已找过 $WT_SRC 下的几个常见位置）"
+    echo "        → scripts/fetch_wt_sources.sh 拉源码（默认放 third_party/wt）"
+    echo "        → 按其中的说明编出 wtperf，或指向完整克隆：WT_SRC=/path/to/wiredtiger"
     echo "        → 然后 make shared（产出 build/libwiredtiger.so）"
     echo "        → 本脚本会用 LD_PRELOAD 把 tinywt 顶上去"
 else
