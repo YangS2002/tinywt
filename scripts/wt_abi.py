@@ -10,6 +10,8 @@ scripts/wt_abi.py —— 量出「真工具 vs 我们的 .so」之间还缺哪�
 判定口径：
   - 只看 wiredtiger_* 与 __wt_*（工具私有的 util_* 由工具自己提供）
   - 版本化符号（foo@GLIBC_2.2.5）去掉版本后缀再比
+
+退出码：0 = 符号齐了**且**没有空桩；1 = 还有缺口 / 还有空桩（方便进 CI 当进度门）。
 """
 import os
 import re
@@ -82,7 +84,7 @@ def main():
 
     print("符号层：缺口 0 —— 动态链接器肯加载了")
     if stubs:
-        print(f"功能层：还有 {stubs} 个是空桩（一律返回 WT_ERROR），真工具会报错退出")
+        print(f"功能层：还有 {stubs} 个是空桩（返回 0 / nullptr / WT_ERROR，都不是真结果）")
         print("        进度看 make capstone 的 C1/C2，不看这个数字")
         return 1
 
