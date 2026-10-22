@@ -1,0 +1,15 @@
+# 构建产物
+build/
+*.o
+*.d
+*.a
+*.exe
+
+# 外部源码（scripts/fetch_wt_sources.sh 拉取，不入库）
+third_party/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
