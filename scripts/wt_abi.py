@@ -67,6 +67,24 @@ def needed(path):
     return syms(path, defined=False) | copy_relocs(path)
 
 
+def probe_public_api():
+    """test/contract/abi_probe.c 里列的公开函数面。
+
+    make probe-link（`--no-undefined`）只挑这份清单里的符号去链，
+    清单短一个，就等于放过一个可能没实现的接口。而清单的来源本来就是
+    "wtperf 实际调用了哪些 wiredtiger_*"，所以两边必须对得上。
+    """
+    f = os.path.join(ROOT, "test", "contract", "abi_probe.c")
+    if not os.path.exists(f):
+        return None
+    with open(f, encoding="utf-8") as fh:
+        txt = fh.read()
+    block = txt.split("twt_probe_functions[]", 1)
+    if len(block) < 2:
+        return None
+    return set(re.findall(r"\(const void \*\)(wiredtiger_\w+)", block[1].split("};")[0]))
+
+
 def main():
     argv = sys.argv[1:]
     if not argv:
@@ -85,6 +103,7 @@ def main():
     print()
 
     total_gap = set()
+    api_union = set()
     for binary in argv:
         if not os.path.exists(binary):
             print(f"! 跳过不存在的 {binary}")
@@ -92,14 +111,44 @@ def main():
         need = needed(binary)
         gap = sorted(need - have)
         total_gap |= set(gap)
+        api_union |= {s for s in need if s.startswith("wiredtiger_")}
         name = os.path.basename(binary)
         print(f"== {name}: 需要 {len(need)} 个，缺 {len(gap)} 个")
         for s in gap:
             print(f"   {s}")
         print()
 
+    # 探针清单 vs **任一工具**需要的公开 API —— 少一个就少一道链检查。
+    # 取并集比较：wt 只用 3 个公共 API、wtperf 用 4 个，逐个比只会互相说对方"不需要"。
+    drift = []
+    probe_api = probe_public_api()
+    if probe_api is not None:
+        print(f"== probe-link 的覆盖面（test/contract/abi_probe.c 列了 {len(probe_api)} 个）")
+        miss = api_union - probe_api
+        extra = probe_api - api_union
+        for s in sorted(miss):
+            print(f"   ! 没覆盖 {s}：它没实现的话 make probe-link 不会报错")
+        for s in sorted(extra):
+            print(f"   · 探针列了 {s}，但没有工具用它（留着无害）")
+        drift = sorted(miss)
+        print()
+
     if total_gap:
-        print(f"合计缺口：{len(total_gap)} 个独立符号 —— LD_PRELOAD 会当场 undefined symbol")
+        print(f"合计缺口：{len(total_gap)} 个独立符号 —— 换成我们的库会当场 undefined symbol")
+        return 1
+
+    if drift:
+        print(f"! 探针清单少了 {len(drift)} 个：{drift} —— "
+              f"make probe-link 的覆盖面已经不准了")
+        return 1
+
+    if total_gap:
+        print(f"合计缺口：{len(total_gap)} 个独立符号 —— 换成我们的库会当场 undefined symbol")
+        return 1
+
+    if drift:
+        print(f"! 探针清单与工具的实际需求差 {len(drift)} 处（见上）—— "
+              f"make probe-link 的覆盖面已经不准了")
         return 1
 
     # 缺口 0 只代表"动态链接器肯加载"，不代表功能对。

@@ -222,6 +222,8 @@ bt = (ROOT / "include/tinywt/btree/btree.h").read_text(encoding="utf-8")
 hs_h = (ROOT / "include/tinywt/txn/history_store.h").read_text(encoding="utf-8")
 hs_c = (ROOT / "src/txn/history_store.cpp").read_text(encoding="utf-8")
 comp = (ROOT / "include/tinywt/compression/compress.h").read_text(encoding="utf-8")
+harness_h = (ROOT / "test/support/harness.hpp").read_text(encoding="utf-8")
+grade_py = (ROOT / "scripts/grade.py").read_text(encoding="utf-8")
 
 for name, cond in [
     ("page.h：Entry::upd + entries + ins_head", all(
@@ -255,6 +257,13 @@ for name, cond in [
             ln for p in (ROOT / "scripts").glob("*.sh")
             for ln in p.read_text(encoding="utf-8").splitlines()
             if not ln.lstrip().startswith("#")))),
+    # 评分器的可信度靠这两条：①每项开跑前有 BEGIN、跑完立刻有 RESULT（崩了能定位）；
+    # ②分母取文档里的总数（否则缺测试二进制时 3/49 会变成 3/30，越缺越好看）。
+    ("harness 每项打 BEGIN", 'printf("BEGIN %s\\t%s\\n"' in harness_h),
+    ("harness 逐项打 RESULT（不在收尾统一打）",
+        harness_h.count('printf("RESULT %s\\t%s\\t%s\\t%d\\t%d\\t%ld\\n"') == 1
+        and "results().push_back(r);" in harness_h.split('printf("RESULT')[0]),
+    ("grade.py 用文档里的总数做分母", "个评分项" in grade_py and "MISS" in grade_py),
 ]:
     ok(name) if cond else bad(name)
 

@@ -283,15 +283,35 @@ CMake 是事实来源，Makefile 只是短命令：
 | `make todo` | `python3 scripts/todo.py [-p P2] [-c]` | 待写函数导航 |
 | `make check-docs` | `python3 scripts/check_docs.py` | 文档与代码对账（数字 / 路径 / 链接） |
 | `make probe` | 目标 `abi_probe_obj` | 编译期合同 |
-| `make probe-link` | 目标 `abi_link_check` | 链接期合同 |
+| `make probe-link` | 目标 `abi_link_check` | 链接期合同（缺哪个接口报哪个符号） |
+| `make wt-abi` | `scripts/wt_abi.py` | 真工具要的符号 vs 我们导出的，差几个 |
 | `make shared` | 目标 `wiredtiger` | `build/libwiredtiger.so` |
 | `make asan` / `tsan` | 独立构建目录 + `-DTINYWT_SANITIZE=` | 越界 / 数据竞争 |
 | `make cp1` / `cp2` | `scripts/checkpoint.sh 1\|2` | 人工门 |
 | `make capstone` | `scripts/capstone.sh` | C1–C4 |
+| `make capstone-selftest` | 同上 + `SHLIB` 指真库 | 验**判据**本身（换真库跑应全绿） |
 
-**评分怎么算**：一个测试函数 = 一个评分项。harness 打印
-`RESULT <proj> <name> <status> <pass> <fail>`，`grade.py` 只做汇总。
-状态只有四种：`PASS` / `FAIL`（写错了）/ `NOTIMPL`（还没写）/ `ERROR`（抛了别的异常）。
+> **`probe-link` 只查它列出的那些符号**：`--no-undefined` 挑的是
+> `abi_probe.c` 里 `twt_probe_functions[]` 那份清单。清单短一个，就等于放过
+> 一个可能没实现的接口（曾经就少列了 `wiredtiger_version` —— 而 `wt` 启动拿它
+> 做版本自检，对不上直接退出）。所以 `make wt-abi` 会用**真二进制的 nm**
+> 反查这份清单：真工具需要、清单里没有的，会被点名。
+
+**评分怎么算**：一个测试函数 = 一个评分项。harness 每一项**开跑前**打一行
+`BEGIN <proj> <name>`，**跑完立刻**打 `RESULT <proj> <name> <status> <pass> <fail>`，
+`grade.py` 只做汇总。状态只有四种：`PASS` / `FAIL`（写错了）/ `NOTIMPL`（还没写）/
+`ERROR`（抛了别的异常或零断言）。
+
+> **为什么逐项打、还要一行 BEGIN**：`RESULT` 以前是等全部跑完统一打的，于是
+> 进程中途崩一次（段错误 / `abort` / `std::terminate`）就**一行都没有**，
+> 前面跑完的项也跟着消失 —— 分母缩小、百分比反而变好看。现在崩在哪一项一目了然：
+> 那一项只有 `BEGIN` 没有 `RESULT`，`grade.py` 报成 `MISS` 并点名。
+
+> **分母来自文档**：`grade.py` 用 README 里那句「49 个评分项」当分母，不是
+> "实际解析到几行"。测试二进制没编出来（`build/bin/*_test` 的 glob 不报错，
+> 少一个就是少一片）、超时、崩溃，都会让实测行数变小；只有固定分母，
+> 才看得见"3/49"和"3/30"的区别。有缺项时 `make grade` 退出码非 0 并列出
+> 哪个二进制、少了什么 —— 缺项是"没测"，不是"通过"。
 
 > `make asan` / `tsan` 走 `ctest`，退出码跟着测试走 —— 骨架阶段会因为大量
 > `NOTIMPL` 整体非 0，这是正常的。它的用途是**在你实现之后**确认没有越界 / 数据竞争：

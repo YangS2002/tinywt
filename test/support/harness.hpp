@@ -142,6 +142,15 @@ run_case(const char *fallback_name, Fn fn)
     const char *status = "PASS";
     std::string note;
 
+    /*
+     * 开跑前先报一声。RESULT 行是**最后**统一打印的，所以进程要是中途崩了
+     * （段错误 / assert / std::terminate），这一项和它后面的项都会从输出里消失，
+     * grade.py 拿到的分母就悄悄变小了 —— "3/49" 会变成 "3/30"，百分比还更高。
+     * 有了 BEGIN 行，grade.py 至少能指出"哪一项开跑了却没有结果"。
+     */
+    printf("BEGIN %s\t%s\n", TWT_PROJECT, case_name_store().c_str());
+    fflush(stdout);
+
     try {
         fn();
     } catch (const twt::NotImplemented &e) {
@@ -181,6 +190,16 @@ run_case(const char *fallback_name, Fn fn)
     r.ms = (long)ms;
     r.note = note;
     results().push_back(r);
+
+    /*
+     * 每项**跑完立刻**打一行 RESULT，不再等 harness_report 收尾时统一打。
+     * 原因：统一打的话，中途崩一次就一行都没有，前面已经跑完的项也一起消失，
+     * grade.py 看到的是"这个二进制什么都没测"，分不清是崩溃还是没写。
+     * 逐项打之后，崩在哪一项一目了然（那一项只有 BEGIN 没有 RESULT）。
+     */
+    printf("RESULT %s\t%s\t%s\t%d\t%d\t%ld\n", r.proj.c_str(), r.name.c_str(), r.status, r.pass,
+      r.fail, r.ms);
+    fflush(stdout);
 }
 
 #define RUN(fn) run_case(#fn, fn)
@@ -210,10 +229,7 @@ harness_report()
     printf("--------------------------------------------------------------------------\n");
     printf("  %s: %d/%d tests, %d assertions\n", proj, ok, total, asserts);
 
-    /* 机器可读（scripts/grade.py 用） */
-    for (const CaseResult &r : results())
-        printf("RESULT %s\t%s\t%s\t%d\t%d\t%ld\n", r.proj.c_str(), r.name.c_str(), r.status, r.pass,
-          r.fail, r.ms);
+    /* 机器可读的收尾行（RESULT 已经在 run_case 里逐项打过了，这里只补 SCORE） */
     printf("SCORE %s\t%d\t%d\n", proj, ok, total);
 
     return ok == total ? 0 : 1;

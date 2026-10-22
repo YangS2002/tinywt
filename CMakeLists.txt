@@ -90,7 +90,7 @@ set_target_properties(tinywt PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(tinywt PUBLIC Threads::Threads)
 
 # ---------------------------------------------------------------- drop-in 共享库
-# 真 wtperf / wt 用 LD_PRELOAD 顶掉 libwiredtiger.so 时必须一个符号都不缺。
+# 真 wtperf / wt 换成我们的 .so 时（LD_LIBRARY_PATH + 同 SONAME）必须一个符号都不缺。
 if(TINYWT_BUILD_SHARED)
   add_library(wiredtiger SHARED
       ${TINYWT_CORE_SOURCES}

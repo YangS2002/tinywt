@@ -14,10 +14,20 @@
  * -*/
 #include "wiredtiger.h"
 
-/* ---- 公开函数面（wtperf 实际调用） ---- */
+/* ---- 公开函数面（真工具实际调用：wt 3 个 + wtperf 4 个，去重后 5 个） ----
+ *
+ * 清单由 `make wt-abi` 对着真二进制核对：真 wt 需要
+ *   wiredtiger_open / wiredtiger_strerror / wiredtiger_version
+ * 真 wtperf 需要
+ *   wiredtiger_open / wiredtiger_strerror / wiredtiger_config_parser_open
+ *   / wiredtiger_calc_modify
+ * 少一个（尤其是 wiredtiger_version：wt 启动就拿它做版本自检，
+ * 对不上直接 EXIT_FAILURE），链接期的 --no-undefined 就少查一个接口。
+ */
 static const void *const twt_probe_functions[] = {
     (const void *)wiredtiger_open,
     (const void *)wiredtiger_strerror,
+    (const void *)wiredtiger_version,
     (const void *)wiredtiger_config_parser_open,
     (const void *)wiredtiger_calc_modify,
 };

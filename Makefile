@@ -77,7 +77,7 @@ probe: configure
 probe-link: build
 	@$(CMAKE) --build $(BUILD) --target abi_link_check -j $(JOBS)
 
-# drop-in 共享库（真 wtperf / wt 用 LD_PRELOAD 顶掉 libwiredtiger.so）
+# drop-in 共享库（同 SONAME 顶掉 libwiredtiger.so.11.3.0，不是 LD_PRELOAD 叠加）
 shared: build
 	@$(CMAKE) --build $(BUILD) --target wiredtiger -j $(JOBS)
 
