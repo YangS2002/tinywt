@@ -1,6 +1,6 @@
 # Leaderboard
 
-> 对标 BusTub 的 leaderboard 文化：**正确性由 `make grade` 判，性能数字记在这里。**
+> **正确性由 `make grade` 判，性能数字记在这里。**（作业形式上的 leaderboard）
 > 这里不进评分，但它是「优化有没有用」的唯一证据 —— 改完 eviction 策略、
 > 换个压缩器，必须能在这张表里看出差别，否则就是自嗨。
 

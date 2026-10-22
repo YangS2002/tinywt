@@ -1,6 +1,9 @@
-# P4 任务书 —— 并发 / MVCC / History Store / RTS / Watermark
+# P4 任务书 —— 版本、时间与并发
 
-> 对标 BusTub P4（MVCC）。总纲与评分见 [PROJECTS.md](../PROJECTS.md)。
+> WT 的版本与并发（`src/history/` + `src/txn/txn_rollback_to_stable.c` +
+> `src/support/hazard.c`）：旧版本什么时候搬进 History Store、旧快照怎么下探、
+> 崩溃后怎么按 stable 回滚、读路径凭什么不持锁还不悬空。
+> 总纲与评分见 [PROJECTS.md](../PROJECTS.md)。
 > 验收：7 个测试项。
 >
 > | 子项目 | 内容 | 函数 | 评分项 |
@@ -10,6 +13,9 @@
 > | T4.3 | History Store | 6 | 2 |
 > | T4.4 | 未提交 reconcile + RTS | 3 | 1 |
 > | T4.5 | Watermark：时间窗口聚合 + stable 点 | 1 | 1 |
+>
+> 别把这层当成「MVCC 作业」：难点是**三层时间戳**（stable / pinned / oldest）
+> 与**旧版本落盘**，版本链本身反而是最简单的部分。
 >
 > **注意**：事务 API 与 WAL 在 P3（T3.4 / T3.5）。P4 建立在它们之上：
 > `TxnManager::visible()` 写错了，P4 的每一个测试都会以「值莫名其妙不对」的形式失败。

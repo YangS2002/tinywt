@@ -20,11 +20,11 @@ import subprocess
 import sys
 
 PROJECT_TITLE = {
-    "P0": "基础件（varint / crc32 / 错误码契约）",
-    "P1": "块管理器 + cell 编解码",
-    "P2": "Buffer Pool + B+Tree（split / reconcile / eviction / checkpoint / codec / compress）",
-    "P3": "C ABI（config / catalog / cursor）+ 事务 API + WAL",
-    "P4": "并发 / hazard / History Store / RTS / watermark",
+    "P0": "编码件与错误码（varint / crc32 / 状态码契约）",
+    "P1": "磁盘格式：块 / extent / cell",
+    "P2": "页与写路径：内存页 / reconcile / eviction / checkpoint / 编码 / 压缩",
+    "P3": "对外 ABI：cursor / 事务 / 日志",
+    "P4": "版本、时间与并发：WT_REF / hazard / HS / RTS / watermark",
 }
 
 STATUS_MARK = {"PASS": "\033[32m PASS \033[0m", "FAIL": "\033[31m FAIL \033[0m",

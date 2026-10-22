@@ -1,8 +1,13 @@
-# P2 任务书 —— Row-Store B-Tree
+# P2 任务书 —— 页与写路径
 
-> 对标 BusTub P2（B+Tree Index）。这是整个项目最重的一个 Project：
-> 骨架里一半的 `UNIMPLEMENTED` 都在这。
+> WT 的核心机制（`src/btree/` + `src/reconcile/`）：内存页 = 磁盘镜像解出的 `entries`
+> + 每键一条 update 链 + 新键的 insert 跳表；写不原地改，reconcile 把三者归并成新镜像。
+> 这是整个项目最重的一段（约四分之一的待写函数）。
 > 总纲与评分见 [PROJECTS.md](../PROJECTS.md)。验收：13 个测试项。
+>
+> **与原顺序的差异**：WT 里 reconcile / eviction / checkpoint 是一体的
+> （`rec_write.c` 与 `bt_evict.c`、`txn_ckpt.c` 互相调用）；这里拆成 T2.4 与 T2.5，
+> 只是为了能分别跑测试。
 
 | 子项目 | 内容 | 函数 | 评分项 |
 |---|---|---|---|

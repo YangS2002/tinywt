@@ -1,16 +1,24 @@
 # tinywt
 
-用**重写 WiredTiger 的骨架**来学存储引擎 —— 按 CMU 15-445（BusTub）的方式组织：
-仓库里给类型、接口、测试和评分器，实现全部留空，你把 `UNIMPLEMENTED(...)` 换成代码。
+用**重写一个 WiredTiger 骨架**来学 WT 本身：仓库里给类型、接口、测试和评分器，
+实现全部留空，你把 `UNIMPLEMENTED(...)` 换成代码。
 
-- 内核 C++17，对外 C ABI（直接用**真** `wiredtiger.h`，不是仿写的）
-- 结构上忠实对齐 WT：**内存页 ≠ 磁盘页**、update 链 + insert 跳表、reconcile、
-  LRU 淘汰、checkpoint、MVCC、History Store、RTS、hazard pointer
-- 终局验收：真 `wtperf` / `wt` 直接链接 `build/libwiredtiger.so` 跑起来；
-  **缺哪个接口，链接器当场报哪个符号**
+作业形式借了 CMU 15-445 的做法（一个 Project 一组可独立编译、独立评分的测试，
+外加门禁和排行榜），**内容一条没借** —— 全是 WT 自己的机制：
+
+- **内存页 ≠ 磁盘页**：`entries` + 每键一条 update 链 + 新键的 insert 跳表
+- **reconcile 整页重写**：写不原地改，用写放大换无锁读
+- **History Store**：旧版本搬家，读的时候按 `read_ts` 下探
+- **三层时间戳**：`stable` / `pinned` / `oldest`，RTS 从 stable 回滚
+- **WT_REF 状态机 + hazard pointer**：`DISK → READING → MEM → LOCKED`
+- **WAL 与 checkpoint 的 LSN 对齐**，以及三条崩溃恢复规则
+- 对外 C ABI 直接用**真** `wiredtiger.h`；终局验收是真 `wtperf` / `wt` 链上
+  `build/libwiredtiger.so` 跑起来 —— **缺哪个接口，链接器当场报哪个符号**
 
 > 完整任务书（项目地图、子项目清单、验收标准、排期）在
 > **[docs/PROJECTS.md](docs/PROJECTS.md)** ← 从这里开始。
+> 想先看「WT 和 BusTub 到底哪里不一样」，直接跳
+> [§1 同名不同物](docs/PROJECTS.md#1-这是-wiredtiger不是-bustub-的第二季)。
 
 ---
 
@@ -38,11 +46,11 @@ P0  1/3    P1  0/3    P2  0/13    P3  2/23    P4  0/7    TOTAL 3/49 (6.1%)
 
 | Project | 子项目 | 评分项 | 你能学到什么 | 任务书 |
 |---|---|---|---|---|
-| **P0** 基础件 | T0.1–T0.2 | 3 | LEB128 / CRC32C / 错误码契约 | [p0](docs/projects/p0_foundation.md) |
-| **P1** 块管理器 | T1.1–T1.3 | 3 | 块读写与校验、extent 三表、cell 编码 | [p1](docs/projects/p1_block_manager.md) |
-| **P2** B+Tree | T2.1–T2.7 | 13 | 内存页三件套、descend、分裂、reconcile、eviction、checkpoint、编码家族 | [p2](docs/projects/p2_btree.md) |
-| **P3** C ABI / 事务 / WAL | T3.0–T3.5 | 23 | 方法表与变参、cursor 遍历、事务可见性、日志重放 | [p3](docs/projects/p3_api_txn_wal.md) |
-| **P4** 并发 / MVCC | T4.1–T4.5 | 7 | tree 级锁、WT_REF 状态机、hazard、History Store、RTS、watermark | [p4](docs/projects/p4_concurrency_mvcc.md) |
+| **P0** 编码件与错误码 | T0.1–T0.2 | 3 | LEB128 / CRC32C / 状态码契约 | [p0](docs/projects/p0_foundation.md) |
+| **P1** 磁盘格式 | T1.1–T1.3 | 3 | 块与 addr cookie、extent 三表、cell 打包 | [p1](docs/projects/p1_block_manager.md) |
+| **P2** 页与写路径 | T2.1–T2.7 | 13 | 内存页三件套、descend、分裂、reconcile、eviction、checkpoint、编码家族 | [p2](docs/projects/p2_btree.md) |
+| **P3** 对外 ABI | T3.0–T3.5 | 23 | 方法表与变参、cursor 两流归并、事务可见性、日志重放 | [p3](docs/projects/p3_api_txn_wal.md) |
+| **P4** 版本、时间与并发 | T4.1–T4.5 | 7 | tree 级锁、WT_REF 状态机、hazard、History Store、RTS、watermark | [p4](docs/projects/p4_concurrency_mvcc.md) |
 | **Capstone** | C1–C4 | 不计分 | 链接真 `wtperf` / `wt`，与真 WT 对照 | [capstone](docs/projects/capstone.md) |
 
 ```

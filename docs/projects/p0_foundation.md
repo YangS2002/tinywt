@@ -1,6 +1,8 @@
-# P0 任务书 —— 基础件热身
+# P0 任务书 —— 编码件与错误码
 
-> 对标 BusTub P0（C++ Primer）。BusTub 用 Trie 热身，tinywt 用编码件热身。
+> WT 的最底层：状态码体系（`src/include/error.h`）、变长整数（`intpack_inline.h`）、
+> 校验和（`src/checksum/`）。这三样决定了后面所有磁盘格式怎么落字节 ——
+> LEB128 写错一个续位，P2 的 descend 会以「键找不到」的形式失败，很难倒查。
 > 总纲与评分见 [PROJECTS.md](../PROJECTS.md)。验收：3 个测试项。
 
 | 子项目 | 内容 | 函数 | 评分项 |

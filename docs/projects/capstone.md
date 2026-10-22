@@ -1,7 +1,7 @@
 # Capstone —— 结业全量验收（C1–C4）
 
-> 15-445 只有四个 Project，没有第五个作业。Capstone 是它的 leaderboard 文化的
-> 自然延伸：**单测证明语义对，Capstone 证明能顶住真工具的用法。**
+> 单测只能证明语义对；Capstone 证明这套实现能顶住**真工具的用法**：
+> 真 `wtperf` 直接 `LD_PRELOAD` 你的 `.so`，真 `wt` 工具打开你写的库。
 
 `make capstone` 调 `scripts/capstone.sh`，逐项跑 C1–C4。任一项 FAIL 则整体退出非 0；
 缺依赖的项记 SKIP 并打印补齐方式 —— **SKIP 不算通过，也不假装通过**。

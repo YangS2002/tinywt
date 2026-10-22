@@ -1,6 +1,9 @@
-# P3 任务书 —— 数据操作层：C ABI / cursor / 事务 / WAL
+# P3 任务书 —— 对外 ABI：cursor / 事务 / 日志
 
-> 对标 BusTub P3（Query Execution）。总纲与评分见 [PROJECTS.md](../PROJECTS.md)。
+> WT 的对外形态：C 方法表（`src/conn/`、`src/session/`、`src/cursor/`）、
+> 配置解析（`src/config/`）、catalog（`src/meta/`）、事务（`src/txn/`）、日志（`src/log/`）。
+> 这一层的验收标准不是单测全绿，而是「真 `wtperf` 能不能链上并跑起来」。
+> 总纲与评分见 [PROJECTS.md](../PROJECTS.md)。
 > 验收：23 个测试项（其中 2 项是契约自检，不需要写代码）。
 >
 > | 子项目 | 内容 | 函数 | 评分项 |
@@ -11,6 +14,9 @@
 > | T3.3 | cursor 读路径与遍历 | 16 | 7 |
 > | T3.4 | 事务 API + modify/truncate | 21 | 5 |
 > | T3.5 | WAL + 崩溃恢复 | 9 | 6 |
+>
+> **与原顺序的差异**：WT 里 log 与 checkpoint 同属持久化（LSN 互相对齐）；这里把
+> T3.5 放在 P3 末尾，是因为要先有完整的 C ABI 链路，`wtperf` 才跑得起来。
 
 ## 前置
 

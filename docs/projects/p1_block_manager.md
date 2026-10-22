@@ -1,7 +1,8 @@
-# P1 任务书 —— Block Manager + cell 编解码
+# P1 任务书 —— 磁盘格式：块、extent、cell
 
-> 对标 BusTub P1（Buffer Pool Manager 的"独立可测组件"思路）：
-> 先把块设备和一个记录格式单独造对，再往上面放 B-Tree。
+> WT 的磁盘格式层（`src/block/` + `src/cell/`）。这一层回答「一个 `.wt` 文件长什么样」：
+> 块怎么定位（addr cookie）、空间怎么回收（extent 三表）、一条记录怎么落字节（cell）。
+> 注意它和内存页是两回事 —— B+Tree 的逻辑页到 P2 才出现，这里只有块和字节。
 > 总纲与评分见 [PROJECTS.md](../PROJECTS.md)。验收：3 个测试项。
 
 | 子项目 | 内容 | 函数 | 评分项 |

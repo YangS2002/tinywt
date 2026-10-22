@@ -25,7 +25,7 @@ make grade         # 看总分从 3/49 往上走
 **唯一一条规则**：打了 `UNIMPLEMENTED("Px/Ty.z ...")` 标签的函数体要你写；
 没打标签的代码不要改（要加私有 helper 就加在对应 `.cpp` 里，别动 `include/` 的布局）。
 
-**边界为什么这么划**（对齐 BusTub 的做法）：
+**边界为什么这么划**：
 
 | 给定 | 你写 |
 |---|---|
@@ -37,33 +37,66 @@ make grade         # 看总分从 3/49 往上走
 
 ---
 
-## 1. 与 CMU 15-445 的同构
+## 1. 这是 WiredTiger，不是 BusTub 的第二季
 
-BusTub 的教学弧线是「底座 → 数据结构 → 让数据可操作 → 并发控制」，
-tinywt 逐段对上：
+先说清楚借了什么、没借什么。
 
-| BusTub (15-445 F24) | tinywt | 说明 |
-|---|---|---|
-| **P0** C++ Primer（Trie 热身） | **P0** 基础件（varint / crc32 / 错误码） | 半天热身，但每个后续 Project 都依赖它 |
-| **P1** Task1 LRU-K Replacer | **P1** Task1 块读写 + 校验 | 都是「最底层的可独立测试组件」 |
-| **P1** Task2 Disk Scheduler | **P1** Task2 extent 三表 + 超级块 | 磁盘空间管理 |
-| **P1** Task3 Parallel Buffer Pool | **P1** Task3 cell 编解码 + 前缀压缩 | 组件组装 |
-| **P2** Task1 B+Tree Pages | **P2** Task1 内存页三件套 + page_in | **内存页 ≠ 磁盘页**，第一个大坎 |
-| **P2** CP1: Search | **P2** Task2 descend 搜索 | 第一个 Checkpoint |
-| **P2** CP2: Insert/Delete | **P2** Task3 插入 + 叶/内部分裂 | 两个分隔符坑 |
-| **P2** Task3 Index Iterator | **P2** Task4 reconcile + LRU eviction | iterator 本体挪到 P3 的 cursor |
-| （BusTub 无） | **P2** Task5 checkpoint + 重开 + verify | 持久化收口 |
-| （BusTub 无） | **P2** Task6–7 编码家族 + 压缩 | key/value 编码属于索引层 |
-| **P3** Task1 System Catalog | **P3** Task1 config + conn + 元数据表 | 元数据自己用 B-Tree 存 |
-| **P3** Task2 Executors | **P3** Task2–4 cursor 读写 + 事务 API | cursor 就是 tinywt 的 executor |
-| （BusTub 无） | **P3** Task5 WAL + 崩溃恢复 | 操作层的持久性收口 |
-| **P4** Task1 Mock Version Chain | **P4** Task2 WT_REF + hazard pointer | 先造并发基础设施 |
-| **P4** Task2/3 TxnMgr + GC | **P4** Task3 History Store | 版本存储 |
-| **P4** rollback/abort | **P4** Task4 未提交 reconcile + RTS | 崩溃后一致性 |
-| **P4** Task4 Watermark | **P4** Task5 stable watermark | 回收水位 |
-| （结业） | **Capstone** C1–C4 | 真工具 + 对照 + 排行榜 |
+**借的只有作业形式**（四条，跟学什么无关）：
 
-两处 BusTub 没有、但 WT 必须有：**WAL**（放 P3）和**压缩家族**（放 P2）。
+1. 一个 Project = 一组能独立编译、独立验收的测试二进制
+2. 一个测试函数 = 一个评分项，harness 打 `PASS / FAIL / NOTIMPL / ERROR`
+3. 门禁：`cp1` / `cp2` 过了才准进下一段
+4. 链接器当评分器：拿真头文件、真工具链，缺符号就链不上
+
+**内容一条没借。** 主轴是 WT 自己的机制依赖图：
+
+```
+错误码 / 编码  ──▶  磁盘格式（块 · extent · cell）
+                          │
+                          ▼
+                 内存页（entries + update 链 + insert 跳表）
+                          │
+            ┌─────────────┴─────────────┐
+            ▼                           ▼
+      reconcile（整页重写）          读路径（descend / 两流归并）
+            │                           │
+            ▼                           ▼
+      eviction + checkpoint       时间戳可见性（start/stop/durable）
+            │                           │
+            └─────────────┬─────────────┘
+                          ▼
+              版本回收（HS 搬家 / RTS / watermark）
+                          │
+                          ▼
+              并发（WT_REF + hazard） 与 WAL（LSN 对齐 checkpoint）
+```
+
+**同名不同物** —— 这张表才是关键，别被名字骗了：
+
+| 名字 | BusTub 里是什么 | tinywt 里是什么 | 差别 |
+|---|---|---|---|
+| B+Tree | 页里存 `(key, RID)` 数组，原地插入 + latch crabbing | 内存页 = 磁盘镜像解出的 `entries` + **每键一条 update 链** + 新键的 **insert 跳表**（`include/tinywt/storage/page.h:162-163`） | 写不原地改；reconcile 整页重写，用写放大换无锁读 |
+| Buffer Pool | frame 复用固定磁盘页，脏页刷回**原位置** | 页地址是 cookie，页会分裂、会搬家；淘汰前必须 reconcile（`btree/btree.h:241,261`） | 页身份不稳定 → 父页里的地址必须跟着重写 |
+| MVCC | 每个 tuple 一条版本链，`txn_id` 判可见 | update 链 + 独立 **History Store** + `start_ts/stop_ts/durable_ts`（`txn/history_store.h`） | 旧版本要落到**另一棵树**；水位是 `min(stable, pinned)` |
+| 恢复 | 没有对应作业（只在课上讲） | WAL 记录 + 三条恢复规则 + `ckpt_lsn` 截断（`wal/log.h`） | 要真写日志、真截断、真重放 |
+| 并发读 | latch crabbing（读者也拿 latch） | `WT_REF` 状态机 + **hazard pointer**（`concurrency/hazard.h`），读路径不持锁 | 淘汰线程不能直接 free，先确认没人 hazard 住 |
+
+**WT 独有、BusTub 完全没有的八件事** —— 这就是这个项目的全部重点：
+
+1. **内存页 ≠ 磁盘页**：`entries[]` / update 链 / insert 跳表三件套并存
+2. **reconcile 整页重写**：把三者归并成新镜像，不是原地改字节
+3. **eviction 与 checkpoint 的脏页协议**：脏页必须先 reconcile 才能淘汰
+4. **两套结构并存**：链上的旧键和跳表里的新键，读的时候要归并取小
+5. **History Store**：旧版本搬家 + 读取时按 `read_ts` 下探
+6. **三层时间戳**：`stable` / `pinned` / `oldest`，以及从 stable 回滚的 RTS
+7. **`WT_REF` 状态机 + hazard pointer**：`DISK → READING → MEM → LOCKED`
+8. **WAL 与 checkpoint 的 LSN 对齐**：恢复点、截断点、turtle 的简化版
+
+那为什么 Project 编号看着像 15-445？因为「底座 → 结构 → 操作 → 并发」这个由浅入深的
+顺序对任何存储引擎都成立，不是照抄它的任务清单。WT 自己的依赖是**网状**的
+（时间戳贯穿读和写、WAL 与 checkpoint 耦合），硬按源码目录切会得到一堆无法独立
+验收的碎片；所以切分边界取「能不能独立跑一个测试二进制」，编号只用来固定顺序。
+与原顺序不一样的地方，各任务书开头都标了。
 
 ---
 
@@ -71,11 +104,11 @@ tinywt 逐段对上：
 
 | Project | 子项目 | 评分项 | 待写函数 | 前置 | 出口门禁 | 任务书 |
 |---|---|---|---|---|---|---|
-| **P0** 基础件 | T0.1–T0.2 | 3 | 5 | — | `make p0-test` | [p0_foundation](projects/p0_foundation.md) |
-| **P1** 块管理器 | T1.1–T1.3 | 3 | 20 | P0 | `make p1-test` | [p1_block_manager](projects/p1_block_manager.md) |
-| **P2** B+Tree | T2.1–T2.7 | 13 | 41 | P1 | `make p2-test` | [p2_btree](projects/p2_btree.md) |
-| **P3** C ABI / 事务 / WAL | T3.0–T3.5 | 23 | 72 | P2 | `cp1` / `cp2` | [p3_api_txn_wal](projects/p3_api_txn_wal.md) |
-| **P4** 并发 / MVCC | T4.1–T4.5 | 7 | 18 | P3 | `make p4-test` + `asan` / `tsan` | [p4_concurrency_mvcc](projects/p4_concurrency_mvcc.md) |
+| **P0** 编码件与错误码 | T0.1–T0.2 | 3 | 5 | — | `make p0-test` | [p0_foundation](projects/p0_foundation.md) |
+| **P1** 磁盘格式：块 / extent / cell | T1.1–T1.3 | 3 | 20 | P0 | `make p1-test` | [p1_block_manager](projects/p1_block_manager.md) |
+| **P2** 页与写路径 | T2.1–T2.7 | 13 | 41 | P1 | `make p2-test` | [p2_btree](projects/p2_btree.md) |
+| **P3** 对外 ABI：cursor / 事务 / 日志 | T3.0–T3.5 | 23 | 72 | P2 | `cp1` / `cp2` | [p3_api_txn_wal](projects/p3_api_txn_wal.md) |
+| **P4** 版本、时间与并发 | T4.1–T4.5 | 7 | 18 | P3 | `make p4-test` + `asan` / `tsan` | [p4_concurrency_mvcc](projects/p4_concurrency_mvcc.md) |
 | **Capstone** | C1–C4 | 不计分 | 0 | P4 | `make capstone` | [capstone](projects/capstone.md) |
 
 ```
@@ -96,14 +129,14 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 
 每个子项目（`Pn/Tn.m`）都对应：**一组函数 + 一组测试 + 一段真 WT 源码**。
 「函数」列是 `make todo` 报的数量；「评分项」列是 `make grade` 里的条目数。
 
-### P0 —— 基础件（5 个函数 / 3 项）
+### P0 —— 编码件与错误码（5 个函数 / 3 项）
 
 | 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
 |---|---|---|---|---|
 | T0.1 构建骨架 + 错误码契约 | **已给**：CMake、harness、`Status` 数值 | 0 | 1 | `WT_NOTFOUND == -31803`；错一位 wtperf 就死循环 |
 | T0.2 varint + crc32 | LEB128 编解码、CRC32C | 5 | 2 | 互逆性；0x80 续位；查表 vs 硬件加速 |
 
-### P1 —— 块管理器 + cell（20 个函数 / 3 项）
+### P1 —— 磁盘格式：块、extent、cell（20 个函数 / 3 项）
 
 | 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
 |---|---|---|---|---|
@@ -111,7 +144,7 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 
 | T1.2 extent 三表 + 超级块 | alloc / avail / discard、addr cookie | 11 | 1 | free → discard → checkpoint 才真正回收 |
 | T1.3 cell 编解码 | short/long key/value、前缀压缩、三种地址 | 5 | 1 | `size` vs `alloc`；cell 是磁盘层的记录格式 |
 
-### P2 —— B+Tree（41 个函数 / 13 项）
+### P2 —— 页与写路径（41 个函数 / 13 项）
 
 | 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
 |---|---|---|---|---|
@@ -123,7 +156,7 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 
 | T2.6 编码家族 | suffix / overflow / dict | 8 | 4 | 长 value 搬到独立块；字典压缩的 COPY 语义 |
 | T2.7 压缩器 | RLE + 可插拔注册表 | 2 | 3 | 压缩发生在**块写入之前**，不感知 cell |
 
-### P3 —— C ABI / cursor / 事务 / WAL（72 个函数 / 23 项）
+### P3 —— 对外 ABI：cursor / 事务 / 日志（72 个函数 / 23 项）
 
 | 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
 |---|---|---|---|---|
@@ -134,7 +167,7 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 
 | T3.4 事务 API | begin/commit/rollback、modify、truncate | 21 | 5 | 可见性判断；回滚只摘自己的版本 |
 | T3.5 WAL + 恢复 | 记录格式、fsync 顺序、重放规则 | 9 | 6 | 尾部截断合法 / 中间损坏非法 |
 
-### P4 —— 并发 / MVCC（18 个函数 / 7 项）
+### P4 —— 版本、时间与并发（18 个函数 / 7 项）
 
 | 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
 |---|---|---|---|---|
