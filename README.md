@@ -29,6 +29,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j   # 或�
 make todo              # 我这段要写哪些函数？（按子项目分组，带 file:line）
 make grade             # 逐项打分：49 个评分项，未实现记 TODO，不中断
 make p2-test           # 只跑 P2
+make check-docs        # 文档里的数字/路径/链接是否还和代码一致
 ```
 
 骨架初始状态：

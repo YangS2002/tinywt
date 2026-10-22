@@ -44,6 +44,8 @@ P4 就是这四件事，一件一个 Task。
 
 ## T4.1 并发 L1：tree 级读写锁（1 项）
 
+> **真 WT**：WT **没有** tree 级读写锁 —— 它靠页级 `WT_PAGE_LOCK` + hazard pointer（`src/include/btmem.h`）。这里的 tree 级 `shared_mutex` 是本版简化，只为先让多线程不崩。
+
 最低配的并发：`Btree::latch()` 是一把 `std::shared_mutex`。
 
 ```
@@ -269,6 +271,8 @@ Status recover_after_crash(Btree &bt, HistoryStore &hs, u64 stable_ts);
 ---
 
 ## T4.5 Watermark：时间窗口聚合 + stable 点（1 项）
+
+> **真 WT**：`src/include/txn.h` 的 `WT_TXN_GLOBAL`（`stable_timestamp` / `pinned_timestamp`）—— 本版的 `oldest = min(stable, pinned)` 就是这两个的比较；checkpoint 推进 stable 在 `src/txn/txn_ckpt.c`。
 
 ### 三根水位线
 

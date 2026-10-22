@@ -1,4 +1,4 @@
-# P1 任务书 —— 磁盘格式：块、extent、cell
+# P1 任务书 —— 磁盘格式：块 / extent / cell
 
 > WT 的磁盘格式层（`src/block/` + `src/cell/`）。这一层回答「一个 `.wt` 文件长什么样」：
 > 块怎么定位（addr cookie）、空间怎么回收（extent 三表）、一条记录怎么落字节（cell）。
@@ -41,6 +41,8 @@ make p0-test
 所以 `Addr::valid()` 判的是 `off != 0`。
 
 ## T1.1 块读写 + 校验（1 项）
+
+> **真 WT**：`src/block/block_read.c: __wt_block_read_off`、`src/block/block_write.c: __wt_block_write_off`；校验和在 `src/checksum/`。
 
 ```cpp
 Status BlockManager::write(const u8 *image, size_t size, Addr &out);

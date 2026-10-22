@@ -56,6 +56,8 @@ P2 的每一次 `page_in` 都要 `BlockManager::read`，每一次 reconcile 都�
 
 ## T2.1 内存页三件套 + page_in（1 项）
 
+> **真 WT**：`src/include/btmem.h`（`WT_PAGE` / `WT_ROW` / `WT_UPDATE` / `WT_INSERT`）、`src/btree/bt_read.c: __wt_page_in`。
+
 | 结构 | 对标 | 语义 |
 |---|---|---|
 | `Entry{key, base, upd}` | `WT_ROW` + `WT_UPDATE` | 磁盘镜像里的一行 + 之后的修改链 |
@@ -78,6 +80,8 @@ update 链」归并成一份 `(key, value)` 列表。归并规则：
 
 ## T2.2 descend（1 项）
 
+> **真 WT**：`src/btree/bt_search.c: __wt_row_search`（内部页二分 + 叶内二分）。
+
 内部页二分下降：`refs[i].key <= target < refs[i+1].key` → 走 `refs[i]`。
 
 `refs[i].key` 是**子树的下界**（`>=` 语义），不是"这棵子树里的第一个键"。
@@ -86,6 +90,8 @@ update 链」归并成一份 `(key, value)` 列表。归并规则：
 测试：插 5000 键后全量回读，顺序和值都对。
 
 ## T2.3 插入 + 分裂（1 项）
+
+> **真 WT**：`src/btree/bt_split.c: __wt_split_insert` / `__wt_split_multi`、`src/btree/bt_page.c: __wt_page_alloc`。
 
 插入路径：
 
@@ -137,6 +143,8 @@ split 之后，右半页的第一个键成为新的分隔符插进父页；**左
 
 ## T2.5 checkpoint + 重开 + verify + 读可见性（2 项）
 
+> **真 WT**：`src/txn/txn_ckpt.c: __wt_checkpoint`、`src/btree/bt_sync.c: __wt_bt_sync`；超级块在 `src/block/block_open.c`。
+
 ### checkpoint
 
 ```
@@ -180,6 +188,8 @@ P3 的 `TxnManager::visible()` 是它的完整版，P4 再加上 History Store �
 「能区分左右子树」就够了。真 WT 的注释里把这件事叫"discarding unnecessary bytes"。
 
 ## T2.7 compressor API（3 项）
+
+> **真 WT**：压缩发生在块写入路径上 —— `src/block/block_write.c` 调 `block->compressor->compress`；压缩器本体是 `ext/compressors/` 下的扩展。
 
 ```
   add_compressor("rle", ...) + compression="rle"

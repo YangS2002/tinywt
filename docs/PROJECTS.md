@@ -75,7 +75,7 @@ make grade         # 看总分从 3/49 往上走
 
 | 名字 | BusTub 里是什么 | tinywt 里是什么 | 差别 |
 |---|---|---|---|
-| B+Tree | 页里存 `(key, RID)` 数组，原地插入 + latch crabbing | 内存页 = 磁盘镜像解出的 `entries` + **每键一条 update 链** + 新键的 **insert 跳表**（`include/tinywt/storage/page.h:162-163`） | 写不原地改；reconcile 整页重写，用写放大换无锁读 |
+| B+Tree | 页里存 `(key, RID)` 数组，原地插入 + latch crabbing | 内存页 = 磁盘镜像解出的 `entries` + **每键一条 update 链** + 新键的 **insert 跳表**（`include/tinywt/storage/page.h:151,162-163`） | 写不原地改；reconcile 整页重写，用写放大换无锁读 |
 | Buffer Pool | frame 复用固定磁盘页，脏页刷回**原位置** | 页地址是 cookie，页会分裂、会搬家；淘汰前必须 reconcile（`btree/btree.h:241,261`） | 页身份不稳定 → 父页里的地址必须跟着重写 |
 | MVCC | 每个 tuple 一条版本链，`txn_id` 判可见 | update 链 + 独立 **History Store** + `start_ts/stop_ts/durable_ts`（`txn/history_store.h`） | 旧版本要落到**另一棵树**；水位是 `min(stable, pinned)` |
 | 恢复 | 没有对应作业（只在课上讲） | WAL 记录 + 三条恢复规则 + `ckpt_lsn` 截断（`wal/log.h`） | 要真写日志、真截断、真重放 |
@@ -171,7 +171,7 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 
 
 | 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
 |---|---|---|---|---|
-| T4.1 并发 L1：tree 级锁 | **跨切面**：给公开入口加 `shared_lock` / `unique_lock` | 0 新函数（改 10 个入口） | 1 | 递归加锁会自锁 → 入口加锁、内部假定已持有 |
+| T4.1 并发 L1：tree 级锁 | **跨切面**：给公开入口加 `shared_lock` / `unique_lock` | 0 新函数（在十几个公开入口加锁） | 1 | 递归加锁会自锁 → 入口加锁、内部假定已持有 |
 | T4.2 WT_REF + hazard | 状态机 `DISK→READING→MEM→LOCKED`、hazard 槽 | 8 | 2 | 读线程被淘汰线程踩到 = use-after-free |
 | T4.3 History Store | 旧版本搬家 + 读取下探（`HistoryReader` 钩子） | 6 | 2 | 判据是 `oldest = min(stable, pinned)`，不是 stable |
 | T4.4 未提交 reconcile + RTS | 未决 update 的落盘形态、crash 后回滚 | 3 | 1 | RTS 从 stable 点回滚，不是最新点 |
@@ -251,7 +251,7 @@ tinywt/
 │   ├── p2/{btree,codec,compress}_test.cpp
 │   ├── p3/{api,cursor,txn,wal}_test.cpp
 │   └── p4/{concurrency,hs_rts}_test.cpp
-├── scripts/                    grade.py / todo.py / checkpoint.sh / capstone.sh
+├── scripts/                    grade.py / todo.py / check_docs.py / checkpoint.sh / capstone.sh
 │                               gen_wiredtiger_h.py / fetch_wt_sources.sh
 └── third_party/
     ├── wiredtiger/include/wiredtiger.h   ← 真 WT 11.3.x 头文件（合同来源）
@@ -279,6 +279,7 @@ CMake 是事实来源，Makefile 只是短命令：
 | `make p2-test` | 只跑 `build/bin/p2_*_test` | 单段测试 |
 | `make grade` | `python3 scripts/grade.py build/bin/*_test` | 逐项打分 |
 | `make todo` | `python3 scripts/todo.py [-p P2] [-c]` | 待写函数导航 |
+| `make check-docs` | `python3 scripts/check_docs.py` | 文档与代码对账（数字 / 路径 / 链接） |
 | `make probe` | 目标 `abi_probe_obj` | 编译期合同 |
 | `make probe-link` | 目标 `abi_link_check` | 链接期合同 |
 | `make shared` | 目标 `wiredtiger` | `build/libwiredtiger.so` |

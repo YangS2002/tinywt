@@ -72,7 +72,7 @@ test_config_parser()
 static void
 test_api_roundtrip()
 {
-    CASE("P3/T3.1+T3.2 open/create/insert/search");
+    CASE("P3/T3.2 open/create/insert/search（与 T3.1 串成一条链）");
     std::string home = dbpath("p3_api");
     rmpath(home);
     fs::create_directories(home);

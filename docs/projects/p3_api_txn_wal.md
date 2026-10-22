@@ -60,7 +60,7 @@ struct __wt_connection {
 
 ## T3.0 错误码契约（已给，2 项）
 
-`src/api/conn.cpp` 里的 `twt_wt_rc()` 和 `wiredtiger_strerror()` 已经写好。
+`src/api/connection.cpp` 里的 `twt_wt_rc()` 和 `wiredtiger_strerror()` 已经写好。
 它们的作用是把内部 `Status` 收敛到一个唯一边界：
 
 ```
@@ -152,6 +152,8 @@ P2 的测试用 `max_leaf_entries` 直接控制页大小（好对拍），
 ---
 
 ## T3.2 session + cursor 写路径（1 个评分项，与 T3.1 串成一条链测）
+
+> **真 WT**：`src/cursor/cur_file.c`（`__wt_curfile_insert` / `_update` / `_remove`）、方法表在 `src/include/cursor.h`。
 
 ```
 s->create(uri, config)        已存在 → WT_ERROR

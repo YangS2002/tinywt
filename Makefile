@@ -8,6 +8,7 @@
 #   make grade            # 逐项打分（未实现记 TODO，不中断）
 #   make p2-test          # 只跑某一个 Project
 #   make todo             # 我这部分要写哪些函数？（按 Task 分组，带 file:line）
+#   make check-docs       # 文档里的数字/路径/链接与代码对账（改完文档跑一次）
 #   make probe            # 编译期合同：错误码数值 + 结构体布局
 #   make probe-link       # 链接期合同：缺哪个接口，链接器就报哪个符号
 #   make shared           # build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
@@ -29,7 +30,7 @@ TYPE       ?= Debug
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 
 .PHONY: all configure build test grade clean probe probe-link shared \
-        cp1 cp2 capstone asan tsan todo
+        cp1 cp2 capstone asan tsan todo check-docs
 
 all: test
 
@@ -113,6 +114,11 @@ tsan:
 #   make todo c=1        只看计数
 todo:
 	@python3 scripts/todo.py $(if $(P),-p $(P)) $(if $(c),-c)
+
+# 文档对账：项目地图的数字、子项目表、路径、链接、make 目标，逐条与仓库比。
+# 改完文档，或挪了文件 / 加了测例之后跑一次，防止文档漂移。
+check-docs: build
+	@python3 scripts/check_docs.py
 
 clean:
 	rm -rf $(BUILD) $(BUILD_ASAN) $(BUILD_TSAN)
