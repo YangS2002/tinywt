@@ -101,7 +101,7 @@ test_cell()
 static void
 test_block()
 {
-    CASE("P1/T1.1+T1.2 block manager (对标 src/block/*.c)");
+    CASE("P1/T1.1 块读写 + 校验");
     std::string p = dbpath("p1_block.wt");
     rmpath(p);
 
@@ -132,6 +132,27 @@ test_block()
     CHECK_ST(bm.write(img2.data(), img2.size(), a2));
     CHECK(a2.off != a1.off);
     CHECK((a2.off >= a1.off + a1.alloc) || (a1.off >= a2.off + a2.alloc));
+
+    CHECK_ST(bm.close());
+    rmpath(p);
+}
+
+/* ---------------------------------------------------------------- T1.2 */
+static void
+test_extent_and_super()
+{
+    CASE("P1/T1.2 extent + 超级块");
+    std::string p = dbpath("p1_block.wt");
+    rmpath(p);
+
+    BlockManager bm;
+    CHECK_ST(bm.open(p, 4096));
+
+    std::vector<u8> img(1000, 0x5A);
+    Addr a1, a2;
+    CHECK_ST(bm.write(img.data(), img.size(), a1));
+    std::vector<u8> img2(5000, 0x33);
+    CHECK_ST(bm.write(img2.data(), img2.size(), a2));
 
     /* 释放 → 进 discard，checkpoint 后回到 avail */
     CHECK_ST(bm.free_block(a1));
@@ -166,7 +187,8 @@ main()
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("tinywt P1: block manager + cell\n");
-    RUN(test_cell);
     RUN(test_block);
+    RUN(test_extent_and_super);
+    RUN(test_cell);
     return harness_report();
 }

@@ -6,7 +6,7 @@
 
 - 语言：C++17（内核）+ C ABI（对外）
 - 结构：**内存页 ≠ 磁盘页**，update 链 + insert 跳表 + reconcile，和真 WT 一一对应
-- 规模：5 个 Project / 31 个测试项
+- 规模：5 个 Project / 46 个测试项 + 1 个 Capstone
 - 契约头：`compat/wiredtiger.h` 是**真** WT 11.3.x 的头文件，不是仿写的
 
 ---
@@ -17,7 +17,11 @@
 make grade        # 逐项打分（未实现记 TODO，不中断）
 make test         # 跑全部测试，任一不过就非零退出
 make p2-test      # 只跑 P2
-make probe        # 校验契约头
+make probe        # 编译期契约：错误码数值 + 头文件可独立编译
+make probe-link   # 链接期契约：缺哪个接口，链接器就报哪个符号
+make cp1 / cp2    # Checkpoint gate（过了才准进下一段）
+make shared       # build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
+make capstone     # C1–C4 结业验收
 ```
 
 骨架初始状态：
@@ -25,11 +29,11 @@ make probe        # 校验契约头
 ```
 project      score   title
 P0         1/3      33.3%   基础件（varint / crc32 / 错误码契约）
-P1         0/2       0.0%   块管理器 + cell 编解码
-P2         0/6       0.0%   Buffer Pool + B+Tree
-P3         2/11     18.2%   C ABI（config / conn / session / cursor）
-P4         0/9       0.0%   事务 / MVCC / History Store / RTS / WAL
-TOTAL      3/31      9.7%
+P1         0/3       0.0%   块管理器 + cell 编解码
+P2         0/13      0.0%   Buffer Pool + B+Tree（含 codec / 压缩）
+P3         2/21      9.5%   C ABI + 事务 API + WAL
+P4         0/6       0.0%   并发 / hazard / HS / RTS / watermark
+TOTAL      3/46      6.5%
 ```
 
 那 3 项已经绿的是**契约自检**（错误码数值、`strerror`），不需要写代码，
@@ -42,11 +46,11 @@ TOTAL      3/31      9.7%
 | Project | 内容 | 关键点 | 测试项 |
 |---|---|---|---|
 | **P0** | varint、crc32、错误码契约 | LEB128 互逆；`WT_NOTFOUND == -31803` | 3 |
-| **P1** | 块管理器 + cell 编解码 | `off==0` 非法；`size` vs `alloc`；前缀压缩 | 2 |
-| **P2** | Buffer Pool + B+Tree | descend / split / reconcile / eviction / checkpoint / cursor | 6 |
-| **P3** | C ABI | 方法表、变参、元数据表、游标遍历 | 11 |
-| **P4** | 事务 / MVCC / HS / RTS / WAL | 快照、精确摘链、`oldest_active`、日志重放 | 9 |
-| **Capstone** | 链接真 `wtperf` / `wt` | 链接器就是评分器 | — |
+| **P1** | 块管理器 + cell 编解码 | `off==0` 非法；`size` vs `alloc`；前缀压缩 | 3 |
+| **P2** | Buffer Pool + B+Tree | descend / split / reconcile / eviction / checkpoint / 编码家族 / 压缩 | 13 |
+| **P3** | C ABI + 事务 + WAL | 方法表、变参、元数据表、游标遍历、精确摘链、日志重放 | 21 |
+| **P4** | 并发 / MVCC | 读写锁、WT_REF + hazard、History Store、RTS、watermark | 6 |
+| **Capstone** | 链接真 `wtperf` / `wt` | 链接器就是评分器（C1–C4，不计入 grade） | — |
 
 每个 Project 的任务书：
 
@@ -61,20 +65,35 @@ TOTAL      3/31      9.7%
 
 ```
 include/      数据结构与接口（不要改签名）
-  twt_defs.h    Status / Slice / Addr / varint / crc32
-  twt_block.h   块管理器（BlockHeader / Extent / SuperBlock）
-  twt_cell.h    cell 描述符位布局
-  twt_page.h    内存页三件套（Entry / Update / Insert / Ref）
-  twt_btree.h   B+Tree + CursorState
-  twt_txn.h     事务 / History Store / RTS / WAL
+  twt_defs.h     Status / Slice / Addr / varint / crc32
+  twt_block.h    块管理器（BlockHeader / Extent / SuperBlock）
+  twt_cell.h     cell 描述符位布局 + 编码家族（suffix / overflow / dict）
+  twt_page.h     内存页三件套（Entry / Update / Insert / Ref + WT_REF 状态）
+  twt_btree.h    B+Tree + CursorState + 并发锁
+  twt_compress.h 压缩器接口（RLE / 可插拔）
+  twt_txn.h      P3/T3.4 事务状态机与快照
+  twt_log.h      P3/T3.5 WAL 记录格式与恢复
+  twt_hazard.h   P4/T4.2 hazard pointer
+  twt_hs.h       P4/T4.3–T4.5 History Store / RTS / watermark
 src/          C++17 内核（★★ 主战场）
-  defs.cpp  block.cpp  cell.cpp  page.cpp  btree.cpp  reconcile.cpp  txn.cpp
+  defs.cpp  block.cpp  cell.cpp  page.cpp  btree.cpp  reconcile.cpp
+  compress.cpp  txn.cpp  wal.cpp  hazard.cpp  hs.cpp
 src_c/        C ABI 层（extern "C"，包 C++ 内核）
   config.cpp  conn.cpp  cursor.cpp  twt_capi.h
 compat/       真 wiredtiger.h（生成物）+ probe.c（契约探针）
 test/         harness.hpp + pN_*_test.cpp（不要改）
-scripts/      grade.py、gen_wiredtiger_h.py、fetch_wt_sources.sh
-docs/         PROJECTS.md / P3.md / P4.md / WT-NOTES.md
+scripts/      grade.py、checkpoint.sh、capstone.sh、gen_wiredtiger_h.py、fetch_wt_sources.sh
+docs/         PROJECTS.md / P3.md / P4.md / CAPSTONE.md / WT-NOTES.md
+```
+
+## 执行顺序（不可跳步）
+
+```
+P0 ─▶ P1 ─▶ P2 ─▶ P3 ─┬─▶ cp1 (T3.0–T3.2)
+                       └─▶ cp2 (T3.3–T3.5)
+                                │
+                                ▼
+                               P4 ─▶ capstone (C1–C4)
 ```
 
 ---
@@ -111,7 +130,8 @@ docs/         PROJECTS.md / P3.md / P4.md / WT-NOTES.md
 
 1. 只改标了 `TODO` 的函数体，别动签名、别动测试。
 2. 不要改 `compat/` 和 `include/` 里的类型定义 —— 那是 ABI 契约。
-3. 交作业前 `make grade` 要 31/31，`grep -rn UNIMPLEMENTED src/ src_c/` 要为空。
+3. 交作业前 `make grade` 要 46/46，`grep -rn UNIMPLEMENTED src/ src_c/` 要为空，
+   `make cp1 && make cp2 && make capstone` 全过。
 
 详细规则见 [docs/PROJECTS.md](docs/PROJECTS.md#三规则)。
 

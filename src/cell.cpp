@@ -89,4 +89,62 @@ cell_unpack(const u8 *p, size_t avail, Cell &out)
     UNIMPLEMENTED("P1/T1.3 cell_unpack");
 }
 
+/* -------------------------------------------------------------------------
+ * T2.6 编码家族
+ *
+ * 这三样东西的共同目的：让「一页装下更多行」，从而降低树高和 IO 次数。
+ *   suffix : internal key 只留分歧点之前的那一段（分隔符仍是下界）
+ *   overflow: 超长 key/value 搬到独立块，页里只留 Addr
+ *   dict   : 页内重复 value 只存一份
+ * ------------------------------------------------------------------------- */
+
+/*
+ * suffix_truncate --
+ *     找 key 与 next_key 的第一个不同字节位置 p（公共前缀长度），
+ *     保留 p + 1 字节即可区分二者。
+ *
+ *     边界：
+ *       - next_key 为空 → 返回 key.size()（最右子树，无从比较）
+ *       - key 是 next_key 的前缀 → 保留 key.size()（再截就区分不开了）
+ *       - key 为空 → 返回 0
+ *
+ *     ★ 截断后的 key 仍然是「子树的下界」：任何落在该子树的键都 >= 它。
+ *       这一点是 split 分隔符不变式（只降不升）的前提。
+ */
+size_t
+suffix_truncate(const Key &key, const Key &next_key)
+{
+    UNIMPLEMENTED("P2/T2.6 suffix_truncate");
+}
+
+void
+cell_pack_value_ovfl(std::vector<u8> &buf, const Addr &overflow)
+{
+    UNIMPLEMENTED("P2/T2.6 cell_pack_value_ovfl");
+}
+
+void
+cell_pack_key_ovfl(std::vector<u8> &buf, size_t prefix, const Addr &overflow)
+{
+    UNIMPLEMENTED("P2/T2.6 cell_pack_key_ovfl");
+}
+
+void
+cell_pack_value_copy(std::vector<u8> &buf, u8 slot)
+{
+    UNIMPLEMENTED("P2/T2.6 cell_pack_value_copy");
+}
+
+int
+ValueDict::find(Slice v) const
+{
+    UNIMPLEMENTED("P2/T2.6 ValueDict::find");
+}
+
+size_t
+ValueDict::add(Slice v)
+{
+    UNIMPLEMENTED("P2/T2.6 ValueDict::add");
+}
+
 } /* namespace twt */

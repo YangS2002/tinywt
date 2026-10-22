@@ -83,7 +83,7 @@ append_uint(std::vector<u8> &buf, u64 v)
 u32
 crc32(const u8 *data, size_t n)
 {
-    UNIMPLEMENTED("P0/T0.3 crc32");
+    UNIMPLEMENTED("P0/T0.2 crc32");
 }
 
 } /* namespace twt */

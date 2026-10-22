@@ -48,7 +48,11 @@
 | `src/btree.cpp` | `src/btree/bt_read.c`<br>`bt_search.c` / `bt_split.c` / `bt_sync.c`<br>`bt_cursor.c` / `src/cache/` | page_in / descend / LRU + eviction / split / checkpoint / 游标遍历 |
 | `src/reconcile.cpp` | `src/reconcile/rec_write.c`<br>`src/reconcile/rec_row.c` | 内存页 → 磁盘镜像、物化 update 链、换 Addr、把父页标脏 |
 | `src_c/*.cpp` | `src/conn/conn_api.c`<br>`src/session/session_api.c`<br>`src/cursor/cur_file.c`<br>`src/config/config*.c` | C ABI 句柄、方法表、配置解析 |
-| `src/txn.cpp` | `src/txn/txn.c`<br>`src/include/txn_inline.h`<br>`src/history/hs.c`<br>`src/log/` | 事务状态机、可见性、History Store、RTS、WAL |
+| `src/txn.cpp` | `src/txn/txn.c`<br>`src/include/txn_inline.h` | 事务状态机、快照、`__wt_txn_visible`、精确摘链（P3/T3.4） |
+| `src/wal.cpp` | `src/log/log.c`<br>`src/log/log_recover.c` | 逻辑 redo、`LOG_ALIGN` / LSN、只重放已提交事务（P3/T3.5） |
+| `src/hazard.cpp` | `src/support/hazard.c`<br>`src/include/hazard.h` | hazard pointer set/clear、淘汰前全表扫描（P4/T4.2） |
+| `src/hs.cpp` | `src/history/hs.c`<br>`src/txn/txn_rollback_to_stable.c`<br>`src/include/time_window.h` | History Store、RTS、`WT_TIME_AGGREGATE`（P4/T4.3–T4.5） |
+| `src/compress.cpp` | `src/compress/`<br>`ext/compressors/` | `add_compressor` 接口、页压缩（P2/T2.7） |
 
 ### 三个结构体的逐字段对照（已按源码核实）
 

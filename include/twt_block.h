@@ -59,8 +59,22 @@ struct SuperBlock {
     u64 root_page_id = 0;
     u64 next_page_id = 1;
     Addr root_addr;
+
+    /*
+     * --- P4/T4.4 + T4.5 ---
+     * flags         : SBF_DIRTY_SHUTDOWN = 上次没走干净关闭 → open 时要 RTS
+     * stable_ts     : 稳定时间戳（watermark），RTS 的回滚锚点
+     * ckpt_lsn      : P3/T3.5 的 checkpoint LSN，日志只需保留 >= 它（预留）
+     */
+    u32 flags = 0;
+    u64 stable_ts = 0;
+    u64 ckpt_lsn = 0;
+
     std::vector<Extent> avail; /* checkpoint 时持久化 */
 };
+
+/* 超级块 flags 位 */
+constexpr u32 SBF_DIRTY_SHUTDOWN = 0x01;
 
 class BlockManager {
 public:

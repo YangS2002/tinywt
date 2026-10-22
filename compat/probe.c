@@ -8,7 +8,9 @@
  *
  * 依赖面来源：bench 目录下 wtperf 全部源文件 grep（见 docs/PROJECTS.md §7）。
  *
- * 现在 make probe 只做编译；实现齐了以后会加 probe-link。
+ *   make probe       只编译（C 合同 + 错误码数值）
+ *   make probe-link  再往前一步：把本文件链进 libtinywt.a，
+ *                    缺哪个接口就在链接器报哪个符号 —— 这就是「链接器当评分器」。
  * -*/
 #include "wiredtiger.h"
 
@@ -60,8 +62,8 @@ twt_probe_members(WT_CONNECTION *conn, WT_SESSION *ses, WT_CURSOR *cur, WT_CONFI
 
 /* 编译期常量合同：错误码数值必须与真 WT 一致（wtperf 判 ret == WT_NOTFOUND）
  * 真值来源：dist/api_err.py（注释写明 "These numbers cannot change without
- * breaking backward compatibility"）。注意 tinywt 的 Status 目前与这里错位 3，
- * 见 docs/P3.md 的 T3.0。 */
+ * breaking backward compatibility"）。tinywt 的 twt::Status 必须逐一对齐，
+ * C ABI 边界（src_c/）只做 twt::Status ↔ int 的**恒等**映射。 */
 _Static_assert(WT_ROLLBACK == -31800, "WT_ROLLBACK 数值变了");
 _Static_assert(WT_DUPLICATE_KEY == -31801, "WT_DUPLICATE_KEY 数值变了");
 _Static_assert(WT_ERROR == -31802, "WT_ERROR 数值变了");

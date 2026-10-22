@@ -22,9 +22,9 @@ import sys
 PROJECT_TITLE = {
     "P0": "基础件（varint / crc32 / 错误码契约）",
     "P1": "块管理器 + cell 编解码",
-    "P2": "Buffer Pool + B+Tree（split / reconcile / eviction / checkpoint）",
-    "P3": "C ABI（config parser / conn / session / cursor）",
-    "P4": "事务 / MVCC / History Store / RTS / WAL",
+    "P2": "Buffer Pool + B+Tree（split / reconcile / eviction / checkpoint / codec / compress）",
+    "P3": "C ABI（config / catalog / cursor）+ 事务 API + WAL",
+    "P4": "并发 / hazard / History Store / RTS / watermark",
 }
 
 STATUS_MARK = {"PASS": "\033[32m PASS \033[0m", "FAIL": "\033[31m FAIL \033[0m",

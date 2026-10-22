@@ -192,13 +192,13 @@ BlockManager::dump_extents() const
 Status
 BlockManager::write_super(const SuperBlock &sb)
 {
-    UNIMPLEMENTED("P1/T1.4 BlockManager::write_super");
+    UNIMPLEMENTED("P1/T1.2 BlockManager::write_super");
 }
 
 Status
 BlockManager::read_super(SuperBlock &sb)
 {
-    UNIMPLEMENTED("P1/T1.4 BlockManager::read_super");
+    UNIMPLEMENTED("P1/T1.2 BlockManager::read_super");
 }
 
 } /* namespace twt */

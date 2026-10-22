@@ -54,7 +54,7 @@ Btree::~Btree()
 Status
 Btree::open(const std::string &path, const Config &cfg)
 {
-    UNIMPLEMENTED("P2/T2.4 Btree::open");
+    UNIMPLEMENTED("P2/T2.1 Btree::open");
 }
 
 /*
@@ -66,7 +66,7 @@ Btree::open(const std::string &path, const Config &cfg)
 Status
 Btree::close()
 {
-    UNIMPLEMENTED("P2/T2.4 Btree::close");
+    UNIMPLEMENTED("P2/T2.1 Btree::close");
 }
 
 /* -------------------------------------------------------------------------
@@ -228,7 +228,7 @@ Btree::put(Slice key, Slice val, u64 txnid, u64 ts)
 Status
 Btree::get(Slice key, Val &out, u64 reader_txnid, u64 read_ts)
 {
-    UNIMPLEMENTED("P2/T2.3 get");
+    UNIMPLEMENTED("P2/T2.2 get");
 }
 
 /*
@@ -376,73 +376,133 @@ Btree::scan_rec(Ref *ref, const std::function<void(const Key &, const Val &)> &f
 Status
 Btree::leaf_load(CursorState &st)
 {
-    UNIMPLEMENTED("P2/T2.5 leaf_load");
+    UNIMPLEMENTED("P3/T3.3 leaf_load");
 }
 
 Status
 Btree::descend_left(CursorState &st, Ref *start, size_t depth)
 {
-    UNIMPLEMENTED("P2/T2.5 descend_left");
+    UNIMPLEMENTED("P3/T3.3 descend_left");
 }
 
 Status
 Btree::descend_right(CursorState &st, Ref *start, size_t depth)
 {
-    UNIMPLEMENTED("P2/T2.5 descend_right");
+    UNIMPLEMENTED("P3/T3.3 descend_right");
 }
 
 Status
 Btree::descend_seek(CursorState &st, const Key &key, Ref *start, size_t depth)
 {
-    UNIMPLEMENTED("P2/T2.5 descend_seek");
+    UNIMPLEMENTED("P3/T3.3 descend_seek");
 }
 
 void
 Btree::unpin_deeper(CursorState &st, size_t keep_levels)
 {
-    UNIMPLEMENTED("P2/T2.5 unpin_deeper");
+    UNIMPLEMENTED("P3/T3.3 unpin_deeper");
 }
 
 Status
 Btree::cursor_first(CursorState &st)
 {
-    UNIMPLEMENTED("P2/T2.5 cursor_first");
+    UNIMPLEMENTED("P3/T3.3 cursor_first");
 }
 
 Status
 Btree::cursor_last(CursorState &st)
 {
-    UNIMPLEMENTED("P2/T2.5 cursor_last");
+    UNIMPLEMENTED("P3/T3.3 cursor_last");
 }
 
 Status
 Btree::cursor_next(CursorState &st)
 {
-    UNIMPLEMENTED("P2/T2.5 cursor_next");
+    UNIMPLEMENTED("P3/T3.3 cursor_next");
 }
 
 Status
 Btree::cursor_prev(CursorState &st)
 {
-    UNIMPLEMENTED("P2/T2.5 cursor_prev");
+    UNIMPLEMENTED("P3/T3.3 cursor_prev");
 }
 
 Status
 Btree::cursor_seek(CursorState &st, const Key &key)
 {
-    UNIMPLEMENTED("P2/T2.5 cursor_seek");
+    UNIMPLEMENTED("P3/T3.3 cursor_seek");
 }
 
 void
 Btree::cursor_release(CursorState &st)
 {
-    UNIMPLEMENTED("P2/T2.5 cursor_release");
+    UNIMPLEMENTED("P3/T3.3 cursor_release");
 }
 
 const std::pair<Key, Val> *
 Btree::cursor_current(const CursorState &st) const
 {
-    UNIMPLEMENTED("P2/T2.5 cursor_current");
+    UNIMPLEMENTED("P3/T3.3 cursor_current");
+}
+
+
+/* -------------------------------------------------------------------------
+ * T2.6 overflow page
+ * ------------------------------------------------------------------------- */
+
+/*
+ * write_overflow --
+ *     把超长数据写成一个独立块（不需要页头，直接 bm_.write 原始字节）。
+ *     真 WT 的 overflow 页带页头且可以链式（多块），本作业单块即可。
+ */
+Status
+Btree::write_overflow(Slice data, Addr &out)
+{
+    UNIMPLEMENTED("P2/T2.6 write_overflow");
+}
+
+Status
+Btree::read_overflow(const Addr &a, Val &out)
+{
+    UNIMPLEMENTED("P2/T2.6 read_overflow");
+}
+
+/* -------------------------------------------------------------------------
+ * T4.3 / T4.4 版本回收与回滚
+ * ------------------------------------------------------------------------- */
+
+/*
+ * extract_old_versions --
+ *     遍历全树（叶子 + insert 节点），对每条 update 链：
+ *       - 从链头往下找第一个 start_ts >= oldest_ts 的位置
+ *       - 它之后的（更老的）版本摘下来交给 fn，并从内存里释放
+ *       - 摘完后把链尾接到 base（base 是「比所有链上版本都老」的已落盘版本）
+ *
+ *     ★ 只摘「所有活跃读者都看不到」的：判据是 oldest_ts，不是 stable_ts。
+ *     ★ 摘完如果链空了，读会回落到 Entry::base —— 这是正确的。
+ */
+Status
+Btree::extract_old_versions(
+  u64 oldest_ts, const std::function<void(const Key &, const Update &)> &fn, u64 &moved)
+{
+    (void)oldest_ts;
+    (void)fn;
+    (void)moved;
+    UNIMPLEMENTED("P4/T4.3 extract_old_versions");
+}
+
+/*
+ * rollback_versions_after --
+ *     把 start_ts > stable_ts 的版本全部摘掉（含未提交的）。
+ *     如果键只存在于 insert 跳表且链被摘空 → 删节点、ninserts--。
+ *     最后 checkpoint 一次（RTS 的结果必须立刻落盘）。
+ */
+Status
+Btree::rollback_versions_after(u64 stable_ts, u64 &removed)
+{
+    (void)stable_ts;
+    (void)removed;
+    UNIMPLEMENTED("P4/T4.4 rollback_versions_after");
 }
 
 } /* namespace twt */

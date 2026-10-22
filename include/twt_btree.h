@@ -12,11 +12,13 @@
 
 #include <functional>
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "twt_block.h"
+#include "twt_compress.h"
 #include "twt_defs.h"
 #include "twt_page.h"
 
@@ -28,6 +30,15 @@ struct Config {
     size_t max_cached_pages = 8;  /* cache 里最多驻留多少页 → 触发 eviction */
     u32 alloc_size = 4096;
     bool verbose = false;
+
+    /* --- P2/T2.6 编码家族 --- */
+    bool internal_key_truncate = true; /* suffix compression：internal key 截断 */
+    bool use_overflow = true;          /* 超长 key/value 写独立块 */
+    size_t value_overflow_size = 512;  /* 超过这个长度就 overflow */
+    bool dictionary = true;            /* 页内重复 value 用 CELL_VALUE_COPY */
+
+    /* --- P2/T2.7 页压缩（作用于块写入之前） --- */
+    Compression compression = Compression::NONE;
 };
 
 struct Stats {
@@ -82,6 +93,19 @@ public:
     const Stats &stats() const { return stats_; }
     size_t cached_pages() const { return cached_; }
     u64 root_page_id() const { return root_ref_ ? root_ref_->page_id : 0; }
+
+    /*
+     * --- P4/T4.2 观察点：根页当前所处状态 ---
+     *
+     * 契约（T4.2 要求真的维护这个状态机，测试按它断言）：
+     *   open() 只根据超级块建立 root_ref_（page == nullptr, state == REF_DISK），
+     *           **不**读页；第一次 descend 才 page_in → READING → MEM。
+     *   eviction 抢到页时 MEM → LOCKED，淘汰完成后回到 DISK。
+     *
+     * 与真 WT 的差别：真 WT 的 WT_REF 在父页里，这里根 Ref 是 Btree 的成员，
+     * 但状态迁移完全同构。
+     */
+    RefState root_ref_state() const { return root_ref_ ? root_ref_->state : REF_DISK; }
     void dump_tree(std::string &out) const;
     /* 校验：页内 key 有序、父页分隔符正确、addr 都能读回来 */
     Status verify(std::string &err);
@@ -108,6 +132,43 @@ public:
     void cursor_release(CursorState &st);
     /* 当前行（仅在 cursor_* 返回 S_OK 后有效） */
     const std::pair<Key, Val> *cursor_current(const CursorState &st) const;
+
+    /* --- P2/T2.6 overflow page（超长 key/value 的落盘位置） --- */
+    Status write_overflow(Slice data, Addr &out);
+    Status read_overflow(const Addr &a, Val &out);
+
+    /* --- P4/T4.3 + T4.4：版本回收与回滚 --- */
+
+    /*
+     * extract_old_versions --
+     *     遍历全树，把 start_ts < oldest_ts 且「所有活跃读者都看不到」的
+     *     Update 从链上摘下来，交给回调（History Store 会存起来），
+     *     并尽量回落到更旧的版本或 base。
+     *
+     *     ★ 用回调而不是直接依赖 HistoryStore，是为了让 Btree 不认识 HS，
+     *       避免 twt_btree.h 与 twt_hs.h 互相 include。
+     *     moved 返回实际搬走的条数。
+     */
+    Status extract_old_versions(
+      u64 oldest_ts, const std::function<void(const Key &, const Update &)> &fn, u64 &moved);
+
+    /*
+     * rollback_versions_after --
+     *     RTS：把所有 start_ts > stable_ts 的 Update 摘掉（未提交的、太新的），
+     *     链摘空后回落到 base；如果键本来只存在于 insert 跳表里，整条删掉。
+     *     removed 返回摘掉的条数。
+     */
+    Status rollback_versions_after(u64 stable_ts, u64 &removed);
+
+    /*
+     * --- P4/T4.1 并发 L1 ---
+     * tree 级读写锁：读（get/scan/cursor）走 shared，写（put/remove/checkpoint/
+     * eviction）走 unique。这是「先能并发」的最低配，hazard pointer 是 T4.2。
+     *
+     * ★ 不要把这个锁加进 split / evict 的内部路径：递归加锁会自锁。
+     *   正确做法是「公开入口加锁，内部实现假定已持有」。
+     */
+    std::shared_mutex &latch() { return latch_; }
 
 private:
     /* --- page cache（对标 src/cache + src/btree/bt_read.c） --- */
@@ -151,6 +212,8 @@ private:
     Page *lru_head_ = nullptr;
     Page *lru_tail_ = nullptr;
     size_t cached_ = 0;
+
+    mutable std::shared_mutex latch_; /* P4/T4.1 */
 };
 
 } /* namespace twt */

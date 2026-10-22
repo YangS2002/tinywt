@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "twt_btree.h"
+#include "twt_txn.h"
 #include "wiredtiger.h"
 
 struct twt_table {
@@ -34,6 +35,17 @@ struct twt_session {
     WT_SESSION iface; /* 必须首成员 */
     twt_conn *conn = nullptr;
     std::vector<twt_table *> open_cursors_tables; /* 简化：只记引用关系 */
+
+    /*
+     * --- P3/T3.4 事务上下文 ---
+     * 真 WT 里 session 就是一个事务上下文：cursor 的每次操作都带上
+     * session->txn 的快照。这里用 in_txn + txn 复刻同一个模型。
+     *
+     * ★ cursor 的 insert/update/remove 必须用 txn.id 作为写入者，
+     *   并把它挂进 txn.writes（回滚要按这个精确摘链）。
+     */
+    twt::Txn txn;
+    bool in_txn = false;
 };
 
 struct twt_cursor {
@@ -55,6 +67,10 @@ struct twt_conn {
     std::map<std::string, twt_table *> tables; /* uri → table */
     twt::Btree *meta = nullptr;                /* home/WiredTiger.wt：uri → 配置串 */
     twt::Config btree_cfg;
+
+    /* --- P3/T3.4：全局事务表；P2/T2.7：已注册的压缩器 --- */
+    twt::TxnManager *txn_mgr = nullptr;
+    std::map<std::string, void *> compressors; /* name → WT_COMPRESSOR* */
 };
 
 /* ---- 句柄互转（iface 在首成员，指针值相同） ---- */

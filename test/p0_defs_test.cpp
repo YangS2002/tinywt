@@ -19,7 +19,7 @@ using namespace twt;
 static void
 test_error_contract()
 {
-    CASE("P0/T0.1 错误码契约（Status vs WT_*）");
+    CASE("P0/T0.1 构建骨架 + 错误码契约");
 
     CHECK((int)S_ROLLBACK == WT_ROLLBACK);
     CHECK((int)S_DUPLICATE == WT_DUPLICATE_KEY);
@@ -61,7 +61,7 @@ test_varint()
 static void
 test_crc32()
 {
-    CASE("P0/T0.3 crc32");
+    CASE("P0/T0.2 crc32");
     const char *s = "123456789";
     /* CRC-32/IEEE 标准校验值 */
     CHECK(crc32(reinterpret_cast<const u8 *>(s), 9) == 0xCBF43926u);

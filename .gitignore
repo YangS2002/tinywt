@@ -13,3 +13,6 @@ third_party/
 .idea/
 *.swp
 .DS_Store
+
+# Capstone 运行时产物
+bench/results/

@@ -116,6 +116,11 @@ struct Cell {
         return !is_short &&
           (type == CELL_ADDR_INT || type == CELL_ADDR_LEAF || type == CELL_ADDR_LEAF_NO);
     }
+    /* T2.6：overflow（值在另一个块里）与字典复用（值在本页的另一行） */
+    bool is_ovfl() const { return !is_short && (type == CELL_KEY_OVFL || type == CELL_VALUE_OVFL); }
+    bool is_copy() const { return !is_short && type == CELL_VALUE_COPY; }
+
+    u8 slot = 0; /* is_copy() 时有效：本页字典槽位 */
 };
 
 /*
@@ -124,5 +129,58 @@ struct Cell {
  *     真 WT: __wt_cell_unpack_safe() (src/cell/cell_unpack.c)
  */
 Status cell_unpack(const u8 *p, size_t avail, Cell &out);
+
+/* -------------------------------------------------------------------------
+ * T2.6 编码家族（对标 rec_write.c 的 suffix compression / overflow / dict）
+ * ------------------------------------------------------------------------- */
+
+/*
+ * suffix_truncate --
+ *     internal page 的 key 只需要「能区分相邻子树」的那一段前缀。
+ *     返回 key 需要保留的字节数（>= 1，且 < key.size() 时才真的截断）。
+ *
+ *     规则（与真 WT 一致）：
+ *       - 与 next_key 的公共前缀长度 + 1（多留 1 字节，保证仍严格区分）
+ *       - 没有 next_key（最右子树）→ 不截断，返回 key.size()
+ *
+ *     真 WT: __wt_cell_pack_int_key() 里的 key_sfx_compress_conf 分支
+ */
+size_t suffix_truncate(const Key &key, const Key &next_key);
+
+/*
+ * overflow cell --
+ *     超长 key/value 不放在页里，而是写成一个独立的块（overflow page），
+ *     cell 里只存那个块的 Addr。
+ *
+ *     布局：[CELL_VALUE_OVFL] [varint cookie_len] [cookie]
+ *           [CELL_KEY_OVFL]   [prefix 1B] [varint cookie_len] [cookie]
+ *
+ *     真 WT: __wt_cell_pack_ovfl()
+ */
+void cell_pack_value_ovfl(std::vector<u8> &buf, const Addr &overflow);
+void cell_pack_key_ovfl(std::vector<u8> &buf, size_t prefix, const Addr &overflow);
+
+/*
+ * 字典压缩（WT_CELL_VALUE_COPY）：
+ *     同一页里重复出现的 value 只存一份，其余 cell 存 1 字节槽位。
+ *
+ *     布局：[CELL_VALUE_COPY] [slot 1B]
+ *
+ *     真 WT: __wt_cell_pack_copy()
+ */
+void cell_pack_value_copy(std::vector<u8> &buf, u8 slot);
+
+/*
+ * ValueDict --
+ *     页内 value 字典（只在 reconcile 期间存在，不落盘）。
+ *     find 返回槽位下标，没有返回 -1；add 返回新槽位（上限 255，超了返回 255 并
+ *     由调用方退化成整值存）。
+ */
+struct ValueDict {
+    std::vector<Val> entries;
+
+    int find(Slice v) const; /* 返回槽位，-1 = 没有 */
+    size_t add(Slice v);     /* 返回槽位；满了返回 255 */
+};
 
 } /* namespace twt */

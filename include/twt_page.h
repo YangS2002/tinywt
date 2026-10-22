@@ -107,6 +107,26 @@ struct Insert {
  *   父页指向子页的引用。addr = 子页在磁盘上的位置；page = 子页的内存实例。
  *   page == nullptr 表示「只在磁盘上」，需要 page_in 读进来。
  */
+/*
+ * RefState：对标 WT_REF 的状态机（btmem.h: WT_REF_DISK / READING / MEM / LOCKED）
+ *
+ * 单向迁移：
+ *     DISK ──page_in──▶ READING ──▶ MEM ◀──▶ LOCKED（eviction 抢占）
+ *
+ * ★ 为什么需要 LOCKED 而不直接加锁：
+ *   eviction 要先把页从「可被别人 page_in」的状态摘出来，否则会出现
+ *   「A 正在读、B 把它 reconcile 掉、A 拿着旧 Page*」的悬空。
+ *   WT 用 CAS 把 MEM→LOCKED，赢的人才拥有这个 ref。
+ *
+ * P2 单线程版不用它（state 恒为 MEM 或 DISK）；P4/T4.2 才要求真正维护。
+ */
+enum RefState : u8 {
+    REF_DISK = 0,
+    REF_READING = 1,
+    REF_MEM = 2,
+    REF_LOCKED = 3,
+};
+
 struct Page;
 struct Ref {
     Key key;       /* 该子树的最小键（父页里的分隔符） */
@@ -115,6 +135,7 @@ struct Ref {
     Page *page;    /* 内存页（nullptr = 未载入 / 已被 evict） */
     Page *home = nullptr; /* 持有这个 Ref 的父页（子页换 addr 后要把父页标脏） */
     bool deleted;
+    RefState state = REF_DISK; /* P4/T4.2：并发 page_in / eviction 的状态机 */
 
     Ref() : page(nullptr), home(nullptr), deleted(false) {}
 };

@@ -22,7 +22,7 @@ using namespace twt;
 static void
 test_btree_basic()
 {
-    CASE("P2/T2.1-2.3 B-Tree 基本 put/get/remove");
+    CASE("P2/T2.1 内存页三件套 + page_in");
     std::string p = dbpath("p2_basic.wt");
     rmpath(p);
 
@@ -58,7 +58,7 @@ test_btree_basic()
 static void
 test_split_and_many()
 {
-    CASE("P2/T2.3 分裂 + 5000 键全量回读");
+    CASE("P2/T2.2 descend（5000 键回读）");
     std::string p = dbpath("p2_split.wt");
     rmpath(p);
 
@@ -187,17 +187,17 @@ static void
 test_diff_against_stdmap()
 {
     /* 多组种子 × 两种 cache 压力（40 页会疯狂淘汰，1000 页基本不淘汰） */
-    diff_run(20261020, 40, "P2 对拍 std::map #1 (cache=40, 强淘汰)");
-    diff_run(1, 40, "P2 对拍 std::map #2 (cache=40, 强淘汰)");
-    diff_run(2, 1000, "P2 对拍 std::map #3 (cache=1000, 无淘汰)");
-    diff_run(3, 1000, "P2 对拍 std::map #4 (cache=1000, 无淘汰)");
+    diff_run(20261020, 40, "P2/T2.3 分裂 + 对拍 std::map #1 (cache=40)");
+    diff_run(1, 40, "P2/T2.3 分裂 + 对拍 std::map #2 (cache=40)");
+    diff_run(2, 1000, "P2/T2.3 分裂 + 对拍 std::map #3 (cache=1000)");
+    diff_run(3, 1000, "P2/T2.3 分裂 + 对拍 std::map #4 (cache=1000)");
 }
 
 /* ---------------------------------------------------------------- T2.5 */
 static void
 test_persistence()
 {
-    CASE("P2/T2.5 持久化：checkpoint → close → reopen → 数据仍在");
+    CASE("P2/T2.5 checkpoint + 重开 + verify");
     std::string p = dbpath("p2_persist.wt");
     rmpath(p);
 
@@ -262,7 +262,7 @@ test_persistence()
 static void
 test_eviction()
 {
-    CASE("P2/T2.4 eviction：cache 上限 3 页，淘汰后仍正确");
+    CASE("P2/T2.4 reconcile + eviction");
     std::string p = dbpath("p2_evict.wt");
     rmpath(p);
 
@@ -305,7 +305,7 @@ test_eviction()
 static void
 test_mvcc()
 {
-    CASE("P2/T2.5 读可见性：旧快照看到旧版本（update chain）");
+    CASE("P2/T2.5 读可见性（update chain）");
     std::string p = dbpath("p2_mvcc.wt");
     rmpath(p);
 
