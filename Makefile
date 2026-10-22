@@ -1,84 +1,50 @@
-# tinywt —— 学习 WiredTiger 实现的极简存储引擎
+# tinywt —— 便捷封装层
 #
-# BusTub 式组织：每个 Project 一个独立测试可执行，互不依赖。
+# 构建的事实来源是 CMakeLists.txt；本文件只是把常用动作包成短命令，
+# 免得每次敲 cmake --build。想接 IDE / CI 就直接用 CMake。
 #
-#   make             # 编译 + 跑全部测试（未实现即失败）
-#   make grade       # 编译 + 逐项打分（未实现记 TODO，不中断）
-#   make p0-test     # 只跑 P0（p1-test / p2-test ... 同理）
-#   make build       # 只编译
-#   make probe       # 编译期合同：compat/wiredtiger.h + 错误码数值
-#   make probe-link  # 链接期合同：缺哪个接口，链接器就报哪个符号
-#   make shared      # 产出 build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
-#   make cp1 / cp2   # Checkpoint gate（不计分，没过不准进下一段）
-#   make capstone    # C1–C4 结业验收
-#   make todo        # 我这部分要写哪些函数？（按 Task 分组，带 file:line）
-#   make asan/tsan   # sanitizer 构建（ASan 抓越界，TSan 抓数据竞争）
+#   make                  # 编译 + 跑全部测试
+#   make build            # 只编译
+#   make grade            # 逐项打分（未实现记 TODO，不中断）
+#   make p2-test          # 只跑某一个 Project
+#   make todo             # 我这部分要写哪些函数？（按 Task 分组，带 file:line）
+#   make probe            # 编译期合同：错误码数值 + 结构体布局
+#   make probe-link       # 链接期合同：缺哪个接口，链接器就报哪个符号
+#   make shared           # build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
+#   make cp1 / cp2        # Checkpoint gate（不计分，没过不准进下一段）
+#   make capstone         # C1–C4 结业验收
+#   make asan / tsan      # 独立的 sanitizer 构建目录，不污染 build/
 #   make clean
 #
-# 注意：-MMD -MP + -include 不能省。头文件改动必须触发重编。
-#       P4 起大量用 std::thread，所以 -pthread 是必需项而不是可选项。
+# 构建产物：
+#   build/bin/<project>_<name>_test    测试二进制
+#   build/lib/libtinywt.a              C++ 内核静态库
+#   build/libwiredtiger.so             drop-in 共享库
 
-CXX      ?= g++
-CC       ?= gcc
-AR       ?= ar
-# 骨架阶段必然有大量「声明了但还没用上」的静态函数，屏蔽这两个警告，
-# 让学生的注意力集中在 FAIL / TODO 上。
-CXXFLAGS ?= -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-function -Wno-unused-parameter \
-            -Iinclude -Icompat -MMD -MP -pthread
-CFLAGS   ?= -std=c11 -O1 -g -Wall -Wextra
-LDFLAGS  ?= -pthread
+BUILD      ?= build
+BUILD_ASAN ?= build-asan
+BUILD_TSAN ?= build-tsan
+CMAKE      ?= cmake
+TYPE       ?= Debug
+JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 
-SRC_CORE := $(wildcard src/*.cpp)
-SRC_CAPI := $(wildcard src_c/*.cpp)
-OBJ := $(patsubst src/%.cpp,build/%.o,$(SRC_CORE)) \
-       $(patsubst src_c/%.cpp,build/capi_%.o,$(SRC_CAPI))
-LIB := build/libtinywt.a
-
-# 共享库版本（drop-in 替换真 libwiredtiger）：必须 -fPIC 单独编一遍
-PICOBJ := $(patsubst src/%.cpp,build/pic/%.o,$(SRC_CORE)) \
-          $(patsubst src_c/%.cpp,build/pic/capi_%.o,$(SRC_CAPI))
-SHLIB := build/libwiredtiger.so
-
-TESTSRC   := $(wildcard test/*_test.cpp)
-TESTBIN   := $(patsubst test/%_test.cpp,build/%_test,$(TESTSRC))
-TESTNAMES := $(patsubst test/%_test.cpp,%,$(TESTSRC))
-
-.PHONY: all build test grade clean probe probe-link shared cp1 cp2 capstone asan tsan todo
+.PHONY: all configure build test grade clean probe probe-link shared \
+        cp1 cp2 capstone asan tsan todo
 
 all: test
 
-build: $(LIB) $(TESTBIN)
+# ---------------------------------------------------------------- 构建
+configure:
+	@$(CMAKE) -S . -B $(BUILD) -DCMAKE_BUILD_TYPE=$(TYPE) >/dev/null
 
-builddir:
-	@mkdir -p build
+build: configure
+	@$(CMAKE) --build $(BUILD) -j $(JOBS)
 
-$(OBJ) $(TESTBIN) build/probe.o build/probe: | builddir
-
-$(LIB): $(OBJ)
-	$(AR) rcs $@ $(OBJ)
-
-build/%.o: src/%.cpp
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-
-build/capi_%.o: src_c/%.cpp
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-
-# 测试：源码 + 脚手架 + 静态库一次编出（测试源很小，不做增量）
-build/%_test: test/%_test.cpp test/harness.hpp $(LIB)
-	$(CXX) $(CXXFLAGS) -o $@ $< -Lbuild -ltinywt $(LDFLAGS)
-
-# 每个作业一个目标：make p0-test / p1-test ...
-# 一个作业可以有多个测试二进制（P3 起：p3_api / p3_cursor / p3_txn / p3_wal）
-p%-test: $(TESTBIN)
-	@found=0; for b in build/p$*_*_test; do \
+# ---------------------------------------------------------------- 测试
+# 每个 Project 一个或多个二进制；任一 FAIL 就非零退出。
+test: build
+	@rc=0; for b in $(BUILD)/bin/*_test; do \
 	  [ -x "$$b" ] || continue; \
-	  found=1; echo; echo "########## $$b"; \
-	  ./$$b || exit 1; \
-	done; \
-	[ $$found -eq 1 ] || { echo "没有 P$* 的测试二进制（build/p$*_test）"; exit 2; }
-
-test: $(TESTBIN)
-	@rc=0; for b in $(TESTBIN); do \
 	  echo; echo "########## $$b"; \
 	  ./$$b || rc=1; \
 	done; \
@@ -86,75 +52,67 @@ test: $(TESTBIN)
 	if [ $$rc -eq 0 ]; then echo "ALL TESTS PASSED"; else echo "SOME TESTS FAILED"; fi; \
 	exit $$rc
 
-# 逐项打分：跑完全部二进制（不看退出码，未实现只会记 TODO），
-# 由 scripts/grade.py 汇总每个 Project 的通过项。
-grade: $(TESTBIN)
-	@python3 scripts/grade.py $(TESTBIN)
+# 单个 Project：make p0-test / make p2-test / make p4-test
+p%-test: build
+	@found=0; for b in $(BUILD)/bin/p$*_*_test; do \
+	  [ -x "$$b" ] || continue; \
+	  found=1; echo; echo "########## $$b"; \
+	  ./$$b || exit 1; \
+	done; \
+	[ $$found -eq 1 ] || { echo "没有 P$* 的测试二进制"; exit 2; }
 
-# P3-T3.0 预置：真 wiredtiger.h 合同（compat/）能否独立编译 + 错误码数值是否对齐。
-# 生成方式见 scripts/gen_wiredtiger_h.py（从 WT 11.3.x 的 wiredtiger.in 生成）。
-probe: build/probe.o
+# 逐项打分：跑完全部二进制（不看退出码，未实现只记 TODO），由 grade.py 汇总
+grade: build
+	@python3 scripts/grade.py $(BUILD)/bin/*_test
 
-build/probe.o: compat/probe.c
-	$(CC) $(CFLAGS) -Icompat -c -o $@ $<
+# ---------------------------------------------------------------- 合同
+# 编译期：_Static_assert 把错误码数值、iface 首成员布局钉死
+probe: configure
+	@$(CMAKE) --build $(BUILD) --target abi_probe_obj -j $(JOBS)
 
-# 「链接器当评分器」：真正的评分在链接期 —— 缺哪个接口就缺哪个符号。
-# 注意这里链成**共享对象**而不是可执行文件：probe.c 没有 main，我们只要
-# 符号全部可解析；--no-undefined 强制把"没实现"变成链接错误而不是运行期崩溃。
-probe-link: build/probe $(LIB)
+# 链接期：链成共享对象 + --no-undefined，缺哪个符号就报哪个
+probe-link: build
+	@$(CMAKE) --build $(BUILD) --target abi_link_check -j $(JOBS)
 
-build/probe: build/probe.o $(LIB)
-	$(CXX) -shared -Wl,--no-undefined -o $@ build/probe.o -Lbuild -ltinywt $(LDFLAGS)
+# drop-in 共享库（真 wtperf / wt 用 LD_PRELOAD 顶掉 libwiredtiger.so）
+shared: build
+	@$(CMAKE) --build $(BUILD) --target wiredtiger -j $(JOBS)
 
-# drop-in 共享库：真 wtperf 用它替换 libwiredtiger.so，一个符号都不能缺。
-shared: $(SHLIB)
-
-build/pic/%.o: src/%.cpp
-	@mkdir -p build/pic
-	$(CXX) $(CXXFLAGS) -fPIC -c -o $@ $<
-
-build/pic/capi_%.o: src_c/%.cpp
-	@mkdir -p build/pic
-	$(CXX) $(CXXFLAGS) -fPIC -c -o $@ $<
-
-$(SHLIB): $(PICOBJ)
-	$(CXX) -shared -o $@ $(PICOBJ) $(LDFLAGS)
-
-# Checkpoint：不是评分项，是「过了才准进下一段」的人工门。
+# ---------------------------------------------------------------- 人工门
 # cp1 = T3.0–T3.2（合同 / config+catalog / 写路径）
 # cp2 = T3.3–T3.5（读路径 / 事务 / WAL）
-cp1: $(LIB)
+cp1: build
 	@bash scripts/checkpoint.sh 1
 
-cp2: $(LIB)
+cp2: build
 	@bash scripts/checkpoint.sh 2
 
-# sanitizer 构建：P4/T4.2 要求「TSan 跑干净」，P2 的 reconcile/eviction 用 ASan 抓越界。
-# ★ 会先 clean、把 sanitizer 版本编进 build/，跑完请再 make clean 回到正常构建。
-asan:
-	@echo "!! sanitizer 构建：跑完请 make clean"
-	@$(MAKE) --no-print-directory clean
-	@$(MAKE) --no-print-directory test \
-	  CXXFLAGS="$(CXXFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer" \
-	  LDFLAGS="$(LDFLAGS) -fsanitize=address,undefined"
-
-tsan:
-	@echo "!! sanitizer 构建：跑完请 make clean"
-	@$(MAKE) --no-print-directory clean
-	@$(MAKE) --no-print-directory test \
-	  CXXFLAGS="$(CXXFLAGS) -fsanitize=thread -fno-omit-frame-pointer" \
-	  LDFLAGS="$(LDFLAGS) -fsanitize=thread"
-
 # 结业验收：C1 runner 全家桶 / C2 wt 工具 / C3 对照组 / C4 leaderboard
-capstone: $(TESTBIN)
+capstone: build
 	@bash scripts/capstone.sh
 
-# 「我该写什么」导航器：把所有 UNIMPLEMENTED 按 Task 分组列出来。
-# 参数进：make todo P=P2（只看某一段）/ make todo c=1（只看计数）
+# ---------------------------------------------------------------- sanitizer
+# 用独立构建目录：避免「跑完 asan 忘了 make clean」这类坑。
+asan:
+	@$(CMAKE) -S . -B $(BUILD_ASAN) -DCMAKE_BUILD_TYPE=Debug \
+	  -DTINYWT_SANITIZE=address >/dev/null
+	@$(CMAKE) --build $(BUILD_ASAN) -j $(JOBS)
+	@ctest --test-dir $(BUILD_ASAN) --output-on-failure
+
+tsan:
+	@$(CMAKE) -S . -B $(BUILD_TSAN) -DCMAKE_BUILD_TYPE=Debug \
+	  -DTINYWT_SANITIZE=thread >/dev/null
+	@$(CMAKE) --build $(BUILD_TSAN) -j $(JOBS)
+	@ctest --test-dir $(BUILD_TSAN) --output-on-failure
+
+# ---------------------------------------------------------------- 导航
+# 「我该写什么」：把所有 UNIMPLEMENTED 按 Task 分组列出来。
+#   make todo            全量
+#   make todo P=P2       只看一段
+#   make todo P=P4/T4.3  精确到一个 Task
+#   make todo c=1        只看计数
 todo:
 	@python3 scripts/todo.py $(if $(P),-p $(P)) $(if $(c),-c)
 
--include $(OBJ:.o=.d) $(PICOBJ:.o=.d)
-
 clean:
-	rm -rf build
+	rm -rf $(BUILD) $(BUILD_ASAN) $(BUILD_TSAN)

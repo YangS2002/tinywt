@@ -1,379 +1,387 @@
-# tinywt 作业计划 v3 —— 功能拆分按 CMU 15-445（BusTub）作业结构
+# tinywt 总任务书
 
-> **约束**：内核 C++17；对外 C ABI（`wiredtiger.h` 语义）。
-> **终局验收**：真 WiredTiger 测试工具（wtperf / wt，原源码编译）直接链接 tinywt 的
-> `libwiredtiger.a` 运行。
-> 真源码定位均指 `wiredtiger/wiredtiger` `mongodb-8.0` 分支（本地 `wiredtiger-src/`）。
-> 本版取代 v2 的 P4–P10 编号；全部工作归位为 P0–P4 + Capstone。
+> **这是唯一入口。** 项目地图、子项目清单、验收标准、依赖顺序、评分规则都在这一份里；
+> 每个 Project 的机制讲解与踩坑细节在 `docs/projects/*.md`。
 >
-> **当前仓库状态**：只保留骨架（接口 + 数据结构 + 测试 + 任务书），
-> 所有函数体是 `UNIMPLEMENTED("Px/Ty ...")`。任务→测试项的映射见 §10。
+> **约束**：内核 C++17；对外 C ABI（`wiredtiger.h` 语义，直接用真头文件）。
+> **终局验收**：真 WiredTiger 工具（`wtperf` / `wt`，原源码编译）直接链接
+> `build/libwiredtiger.so` 跑起来；缺哪个接口，链接器当场报哪个符号。
+> **真源码定位**均指 `wiredtiger/wiredtiger` 的 `mongodb-8.0` 分支。
+>
+> **当前仓库状态**：只有骨架（接口 + 数据结构 + 测试 + 任务书），
+> 156 个函数体是 `UNIMPLEMENTED("Px/Ty.z ...")`。跑 `make grade` = 3/49。
 
 ---
 
-## 0. 与 15-445 的同构（拆分的总纲）
+## 0. 三分钟上手
+
+```bash
+make todo P=P0     # 我这段要写哪几个函数（带 file:line）
+vim src/common/defs.cpp
+make p0-test       # 只跑 P0
+make grade         # 看总分从 3/49 往上走
+```
+
+**唯一一条规则**：打了 `UNIMPLEMENTED("Px/Ty.z ...")` 标签的函数体要你写；
+没打标签的代码不要改（要加私有 helper 就加在对应 `.cpp` 里，别动 `include/` 的布局）。
+
+**边界为什么这么划**（对齐 BusTub 的做法）：
+
+| 给定 | 你写 |
+|---|---|
+| 全部类型、位布局、enum、成员变量、接口签名 | 156 个函数体 |
+| 49 个评分项（测试 + harness + 评分器） | —— |
+| 真 `wiredtiger.h` + ABI 合同探针 | —— |
+| 页 / update 链 / WAL 记录 / HS 的**字段定义** | 链维护、reconcile 归并、split、evict、下探、回放 |
+| 构建、门禁、排行榜脚本 | —— |
+
+---
+
+## 1. 与 CMU 15-445 的同构
 
 BusTub 的教学弧线是「底座 → 数据结构 → 让数据可操作 → 并发控制」，
 tinywt 逐段对上：
 
-| BusTub (15-445 F24) | tinywt 作业 | 状态 |
+| BusTub (15-445 F24) | tinywt | 说明 |
 |---|---|---|
-| **P0** C++ Primer（Trie 热身） | **P0** 基础件热身（varint/Slice/CRC/构建骨架） | ⬜ |
-| **P1** Task1 LRU-K Replacer | **P1** Task1 块读写与校验 | ⬜ |
-| **P1** Task2 Disk Scheduler | **P1** Task2 extent 三表 + 超级块 | ⬜ |
-| **P1** Task3 Parallel Buffer Pool | **P1** Task3 cell 编解码 + 前缀压缩 | ⬜ |
-| **P2** Task1 B+Tree Pages | **P2** Task1 内存页三件套 + page_in | ⬜ |
-| **P2** Checkpoint 1: Search | **P2** Task2 descend 搜索 | ⬜ |
-| **P2** Checkpoint 2: Insert/Delete | **P2** Task3 插入 + 叶/内部分裂（两个分隔符坑） | ⬜ |
-| **P2** Task3 Index Iterator | **P2** Task4 reconcile + LRU eviction（iterator 本体挪到 tinywt P3 的 cursor） | ⬜ |
-| （BusTub 无对应） | **P2** Task5 checkpoint + 重开恢复 + verify + 读可见性 | ⬜ |
-| **P3** Task1 System Catalog | **P3** Task1 URI + 元数据表 + config parser | ⬜ |
-| **P3** Task2 Executors | **P3** Task2–4 Cursor 读写遍历 + 事务 API | ⬜ |
-| （BusTub 无日志作业） | **P3** Task5 WAL + 崩溃恢复 | ⬜ |
-| **P3** Leaderboard | **P3** Leaderboard：真 wtperf 读写混合 ops/s | ⬜ |
-| **P4** Task1 Mock Version Chain | **P4** Task2 WT_REF 状态机 + hazard pointer | ⬜ |
-| **P4** Task2/3 TxnMgr + GC | **P4** Task3 History Store（版本存储） | ⬜ |
-| **P4** rollback/abort | **P4** Task4 未提交 reconcile + RTS | ⬜ |
-| **P4** Task4 Watermark | **P4** Task5 时间窗口聚合 + stable watermark | ⬜ |
-| **P4** Leaderboard | **P4** Leaderboard：evict-btree-stress | ⬜ |
-| （结业） | **Capstone** 全量验收：runner 全家桶 + wt 工具子集 + 真 WT 对照 | ⬜ |
+| **P0** C++ Primer（Trie 热身） | **P0** 基础件（varint / crc32 / 错误码） | 半天热身，但每个后续 Project 都依赖它 |
+| **P1** Task1 LRU-K Replacer | **P1** Task1 块读写 + 校验 | 都是「最底层的可独立测试组件」 |
+| **P1** Task2 Disk Scheduler | **P1** Task2 extent 三表 + 超级块 | 磁盘空间管理 |
+| **P1** Task3 Parallel Buffer Pool | **P1** Task3 cell 编解码 + 前缀压缩 | 组件组装 |
+| **P2** Task1 B+Tree Pages | **P2** Task1 内存页三件套 + page_in | **内存页 ≠ 磁盘页**，第一个大坎 |
+| **P2** CP1: Search | **P2** Task2 descend 搜索 | 第一个 Checkpoint |
+| **P2** CP2: Insert/Delete | **P2** Task3 插入 + 叶/内部分裂 | 两个分隔符坑 |
+| **P2** Task3 Index Iterator | **P2** Task4 reconcile + LRU eviction | iterator 本体挪到 P3 的 cursor |
+| （BusTub 无） | **P2** Task5 checkpoint + 重开 + verify | 持久化收口 |
+| （BusTub 无） | **P2** Task6–7 编码家族 + 压缩 | key/value 编码属于索引层 |
+| **P3** Task1 System Catalog | **P3** Task1 config + conn + 元数据表 | 元数据自己用 B-Tree 存 |
+| **P3** Task2 Executors | **P3** Task2–4 cursor 读写 + 事务 API | cursor 就是 tinywt 的 executor |
+| （BusTub 无） | **P3** Task5 WAL + 崩溃恢复 | 操作层的持久性收口 |
+| **P4** Task1 Mock Version Chain | **P4** Task2 WT_REF + hazard pointer | 先造并发基础设施 |
+| **P4** Task2/3 TxnMgr + GC | **P4** Task3 History Store | 版本存储 |
+| **P4** rollback/abort | **P4** Task4 未提交 reconcile + RTS | 崩溃后一致性 |
+| **P4** Task4 Watermark | **P4** Task5 stable watermark | 回收水位 |
+| （结业） | **Capstone** C1–C4 | 真工具 + 对照 + 排行榜 |
 
-两处 BusTub 没有的东西（WAL、压缩家族）：WAL 补在 P3（它是"操作层"的持久性收口）；
-压缩家族补在 P2 的 Task 2.6/2.7（key/value 编码属于"索引结构"层，接口已冻结，
-最后做不影响前面）。
+两处 BusTub 没有、但 WT 必须有：**WAL**（放 P3）和**压缩家族**（放 P2）。
 
-**通用规则**（每个作业都按这套机制运转）：
+---
+
+## 2. 项目地图
+
+| Project | 子项目 | 评分项 | 待写函数 | 前置 | 出口门禁 | 任务书 |
+|---|---|---|---|---|---|---|
+| **P0** 基础件 | T0.1–T0.2 | 3 | 5 | — | `make p0-test` | [p0_foundation](projects/p0_foundation.md) |
+| **P1** 块管理器 | T1.1–T1.3 | 3 | 20 | P0 | `make p1-test` | [p1_block_manager](projects/p1_block_manager.md) |
+| **P2** B+Tree | T2.1–T2.7 | 13 | 41 | P1 | `make p2-test` | [p2_btree](projects/p2_btree.md) |
+| **P3** C ABI / 事务 / WAL | T3.0–T3.5 | 23 | 72 | P2 | `cp1` / `cp2` | [p3_api_txn_wal](projects/p3_api_txn_wal.md) |
+| **P4** 并发 / MVCC | T4.1–T4.5 | 7 | 18 | P3 | `make p4-test` + `asan` / `tsan` | [p4_concurrency_mvcc](projects/p4_concurrency_mvcc.md) |
+| **Capstone** | C1–C4 | 不计分 | 0 | P4 | `make capstone` | [capstone](projects/capstone.md) |
 
 ```
-Task N         固定接口签名 + 真 WT 源码定位 + 已知的坑；不许多改接口
-Checkpoint     作业内里程碑，过 gate 测试才能进下一段（对标 BusTub CP1/CP2）
-Leaderboard    可选竞技任务：性能数字进排行榜（对标 BusTub P3/P4 leaderboard）
-Written Q      待做作业 → 面试口径书面题；已完成作业 → 复习题（按你单概念复习的习惯）
-提交纪律       每 Task 一个 commit："P3-T2: cursor next cross-page"
-链接器即评分器  真 wiredtiger.h 原样拷给测试工具编译，tinywt 只实现用到的符号，
-               缺功能 = 链接当场缺符号报错，nm/ld 替我们当 grader
+P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 / catalog / 写路径)
+                          └─▶ cp2 (T3.3–T3.5: 读路径 / 事务 / WAL)
+                                   │
+                                   ▼
+                                  P4 ──▶ Capstone (C1–C4)
 ```
 
+`cp1` / `cp2` 不是计分项，是**人工门**：不过就不准进下一段。
+它们的第三道关是「真 wtperf 用你的 `.so` 跑起来」，通常在 P3 后半段才有意义。
+
 ---
 
-## 1. Project 0 —— 基础件热身（⬜ 待做：见 docs/P0.md）
+## 3. 子项目清单
 
-对标 BusTub P0（C++ Primer）。BusTub 用 Trie 热身，tinywt 用编码件热身。
+每个子项目（`Pn/Tn.m`）都对应：**一组函数 + 一组测试 + 一段真 WT 源码**。
+「函数」列是 `make todo` 报的数量；「评分项」列是 `make grade` 里的条目数。
 
-| Task | 内容 | 评分测试 |
+### P0 —— 基础件（5 个函数 / 3 项）
+
+| 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
+|---|---|---|---|---|
+| T0.1 构建骨架 + 错误码契约 | **已给**：CMake、harness、`Status` 数值 | 0 | 1 | `WT_NOTFOUND == -31803`；错一位 wtperf 就死循环 |
+| T0.2 varint + crc32 | LEB128 编解码、CRC32C | 5 | 2 | 互逆性；0x80 续位；查表 vs 硬件加速 |
+
+### P1 —— 块管理器 + cell（20 个函数 / 3 项）
+
+| 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
+|---|---|---|---|---|
+| T1.1 块读写 + 校验 | 块头、checksum、损坏检测 | 4 | 1 | `off == 0` 非法；改 1 字节必须报 CORRUPT |
+| T1.2 extent 三表 + 超级块 | alloc / avail / discard、addr cookie | 11 | 1 | free → discard → checkpoint 才真正回收 |
+| T1.3 cell 编解码 | short/long key/value、前缀压缩、三种地址 | 5 | 1 | `size` vs `alloc`；cell 是磁盘层的记录格式 |
+
+### P2 —— B+Tree（41 个函数 / 13 项）
+
+| 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
+|---|---|---|---|---|
+| T2.1 内存页三件套 + page_in | `entries[]` / update 链 / insert 跳表 | 9 | 1 | **内存页 ≠ 磁盘页** |
+| T2.2 descend 搜索 | 二分下降、内部页分隔符语义 | 2 | 1 | 5000 键全量回读 |
+| T2.3 插入 + 分裂 | 叶分裂 / 内部分裂 | 5 | 1 | 左半页分隔符漏更新；只降不升 |
+| T2.4 reconcile + eviction | 归并三者写回镜像、LRU 淘汰 | 7 | 1 | 写放大；页搬家 → 父页必须标脏 |
+| T2.5 checkpoint + verify | 后序遍历、超级块、重开恢复、读可见性 | 8 | 2 | 崩溃点只能落在「改完超级块」之后 |
+| T2.6 编码家族 | suffix / overflow / dict | 8 | 4 | 长 value 搬到独立块；字典压缩的 COPY 语义 |
+| T2.7 压缩器 | RLE + 可插拔注册表 | 2 | 3 | 压缩发生在**块写入之前**，不感知 cell |
+
+### P3 —— C ABI / cursor / 事务 / WAL（72 个函数 / 23 项）
+
+| 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
+|---|---|---|---|---|
+| T3.0 错误码契约 | **已给**：`Status → WT_*` 恒等映射 | 0 | 2 | 只差 3 的两个负数值 |
+| T3.1 config + conn + catalog | 配置解析、URI 映射、元数据表 | 5 | 2 | 元数据自己用 B-Tree 存（`WiredTiger.wt`） |
+| T3.2 cursor 写路径 | 方法表、变参拆包、insert/update | 21 | 1 | `iface` 必须首成员；`void(...)` |
+| T3.3 cursor 读路径 | next/prev 状态机、search_near、split 中遍历 | 16 | 7 | 两条流归并取小；**游标位置是页+偏移** |
+| T3.4 事务 API | begin/commit/rollback、modify、truncate | 21 | 5 | 可见性判断；回滚只摘自己的版本 |
+| T3.5 WAL + 恢复 | 记录格式、fsync 顺序、重放规则 | 9 | 6 | 尾部截断合法 / 中间损坏非法 |
+
+### P4 —— 并发 / MVCC（18 个函数 / 7 项）
+
+| 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
+|---|---|---|---|---|
+| T4.1 并发 L1：tree 级锁 | **跨切面**：给公开入口加 `shared_lock` / `unique_lock` | 0 新函数（改 10 个入口） | 1 | 递归加锁会自锁 → 入口加锁、内部假定已持有 |
+| T4.2 WT_REF + hazard | 状态机 `DISK→READING→MEM→LOCKED`、hazard 槽 | 8 | 2 | 读线程被淘汰线程踩到 = use-after-free |
+| T4.3 History Store | 旧版本搬家 + 读取下探（`HistoryReader` 钩子） | 6 | 2 | 判据是 `oldest = min(stable, pinned)`，不是 stable |
+| T4.4 未提交 reconcile + RTS | 未决 update 的落盘形态、crash 后回滚 | 3 | 1 | RTS 从 stable 点回滚，不是最新点 |
+| T4.5 watermark | `oldest = min(stable, pinned)` | 1 | 1 | 长事务会卡住水位 → HS 和 cache 都涨 |
+
+### Capstone —— 结业验收（不计分）
+
+| 关卡 | 内容 | 过关标准 |
 |---|---|---|
-| T0.1 | 构建骨架：Makefile（`-MMD -MP` 头依赖陷阱已踩平）、断言框架 | `make` 全绿 |
-| T0.2 | varint（LEB128）、Slice、CRC32（IEEE） | p0-test：编解码往返 |
-
-**复习题**：① varint 为什么选 LEB128 而不是固定 4B？在 cell 头里的代价模型？
-② CRC 为什么放在 BlockHeader 而不是页尾？
+| C1 | 真 `wtperf` 全家桶（populate / read / update / evict / checkpoint / long-txn） | 全部跑通，无符号缺失 |
+| C2 | 真 `wt` 工具子集（`wt list` / `wt dump` / `wt verify`） | 能读自己写的库 |
+| C3 | 对照组：同一 runner 跑真 WT，对比吞吐 / 空间放大 | 差距在可解释范围内 |
+| C4 | 排行榜：`docs/LEADERBOARD.md` 填数字 | 至少一条曲线 |
 
 ---
 
-## 2. Project 1 —— Block Manager：磁盘块底座（⬜ 待做：见 docs/P1.md）
+## 4. 三种交付形态（不是所有子项目都是填空）
 
-对标 BusTub P1（Buffer Pool Manager）：独立组件逐个造，再组装。
-
-| Task | 内容（BusTub 对标） | 评分测试 |
+| 形态 | 例子 | 你怎么做 |
 |---|---|---|
-| T1.1 | 块读写 + BlockHeader{disk_size,checksum} + 损坏检测（← LRU-K Replacer：独立可测组件） | 往返 / 改坏 1 字节必报 CORRUPT |
-| T1.2 | extent 三表 alloc/avail/discard + 超级块 + addr cookie（← Disk Scheduler） | free→discard→checkpoint 回收 |
-| T1.3 | cell 编解码：short/long key/value、前缀压缩、三地址类型（← Parallel Buffer Pool：组件组装） | cell 往返 + 前缀还原 |
+| **填空** | 绝大多数子项目 | 把 `UNIMPLEMENTED(...)` 换成实现，签名不动 |
+| **加壳（跨切面）** | T4.1 并发 L1 | 已有函数体不动逻辑，只在公开入口加一层锁；`make todo` 看不到它，因为不新增函数 |
+| **接线** | T4.3 读取下探 | 实现 `HistoryStore::read`，并确认 `Btree::get` 走 `history_reader_`（钩子已在头里，测试用 `FakeHistory` 验） |
 
-**复习题**：① 为什么 offset 0 非法（首块是描述块）？② alloc/avail/discard 三张表
-为什么 discard 必须跨 checkpoint 存活而 avail 不用？③ addr cookie 为什么对 B-Tree
-层是不透明字节串？
+`make todo` 只统计第一种。第二种看 `tinywt/btree/btree.h` 里 `P4/T4.1` 的注释；
+第三种看 `tinywt/txn/history_store.h` 与 `tinywt/btree/btree.h` 里 `P4/T4.3` 的注释。
 
 ---
 
-## 3. Project 2 —— Row-Store B-Tree（⬜ 待做：见 docs/P2.md）
+## 5. 目录结构
 
-对标 BusTub P2（B+Tree Index）。Checkpoints 已按 BusTub 的"先 Search 后 Insert"节奏走过。
+按模块分目录，公共头与私有头分离 —— 和 BusTub / 绝大多数 C++ 项目一致。
 
-| Task | 内容（BusTub 对标） | 评分测试 |
+```
+tinywt/
+├── CMakeLists.txt              ← 构建的唯一事实来源
+├── Makefile                    ← 便捷封装（转发 cmake），保留 make grade 等短命令
+├── README.md
+├── docs/
+│   ├── PROJECTS.md             ← 本文件（总任务书）
+│   ├── projects/               ← 每个 Project 的任务书（机制讲解 + 踩坑）
+│   │   ├── p0_foundation.md
+│   │   ├── p1_block_manager.md
+│   │   ├── p2_btree.md
+│   │   ├── p3_api_txn_wal.md
+│   │   ├── p4_concurrency_mvcc.md
+│   │   └── capstone.md
+│   ├── notes/wt-notes.md       ← 背景阅读：WT 机制与常见误解
+│   └── LEADERBOARD.md
+├── include/tinywt/             ← 公共头（布局 = ABI 契约，不要改）
+│   ├── common/defs.h           Status / Slice / varint / crc32
+│   ├── storage/block.h         块管理器（BlockHeader / Extent / SuperBlock）
+│   ├── storage/cell.h          cell 描述符位布局 + 编码家族
+│   ├── storage/page.h          内存页三件套（Entry / Update / Insert / Ref）
+│   ├── btree/btree.h           B+Tree + CursorState + 并发锁 + HistoryReader
+│   ├── compression/compress.h  压缩器接口（RLE / 可插拔）
+│   ├── txn/txn.h               事务状态机与快照
+│   ├── txn/history_store.h     History Store / RTS / watermark
+│   ├── wal/log.h               WAL 记录格式与恢复
+│   └── concurrency/hazard.h    hazard pointer
+├── src/                        ← 实现（★ 主战场）
+│   ├── common/defs.cpp
+│   ├── storage/{block,cell,page}.cpp
+│   ├── btree/{btree,reconcile}.cpp
+│   ├── compression/compress.cpp
+│   ├── txn/{txn,history_store}.cpp
+│   ├── wal/log.cpp
+│   ├── concurrency/hazard.cpp
+│   └── api/                    ← C ABI 层（capi.h 是私有头，不对外）
+│       ├── capi.h
+│       └── {config,connection,cursor}.cpp
+├── test/
+│   ├── support/harness.hpp     RUN / CASE / SCORE / 异常防火墙
+│   ├── contract/abi_probe.c    错误码数值 + iface 布局（编译期 + 链接期）
+│   ├── p0/defs_test.cpp
+│   ├── p1/block_cell_test.cpp
+│   ├── p2/{btree,codec,compress}_test.cpp
+│   ├── p3/{api,cursor,txn,wal}_test.cpp
+│   └── p4/{concurrency,hs_rts}_test.cpp
+├── scripts/                    grade.py / todo.py / checkpoint.sh / capstone.sh
+│                               gen_wiredtiger_h.py / fetch_wt_sources.sh
+└── third_party/
+    ├── wiredtiger/include/wiredtiger.h   ← 真 WT 11.3.x 头文件（合同来源）
+    └── wt/                               ← 真 WT 源码子集（fetch 脚本拉的，gitignore）
+```
+
+**为什么这样分**：
+
+- `include/tinywt/<module>/` 与 `src/<module>/` 一一对应，找实现不用猜目录。
+- `src/api/` 是唯一对外暴露 C ABI 的地方；私有头 `capi.h` 不进 `include/`，
+  因为外部用户只应该看到 `wiredtiger.h`。
+- `test/pN/` 与 Project 同编号，`make p2-test` 就是跑 `test/p2/` 下的二进制。
+- 真 WT 头放 `third_party/` 而不是自己写一份「像样的」：合同只能用真的。
+
+---
+
+## 6. 构建、测试、评分
+
+CMake 是事实来源，Makefile 只是短命令：
+
+| 命令 | 等价 CMake | 用途 |
 |---|---|---|
-| T2.1 | 内存页三件套 entries/update链/insert跳表 + page_in（← B+Tree Pages） | 物化往返 |
-| T2.2 | descend 二分下降（← **Checkpoint 1: Search**） | 5000 键全量回读 |
-| T2.3 | 插入 + 叶/内部分裂；分隔符两个坑：左半页分隔符漏更新 / 只降不升（← **Checkpoint 2: Insert**） | 对拍 std::map ×4 种子 |
-| T2.4 | reconcile + LRU eviction（← Index Iterator 的前置） | cache=3 强制淘汰 1800+ 次仍全对 |
-| T2.5 | checkpoint 后序遍历 + 超级块 + 重开恢复 + verify + 读可见性 | 持久化重开 800 键 |
-| **T2.6** 🚧 | **编码家族**：suffix compression（`rec_write.c:723`，`internal_key_truncate`）+ overflow page（`WT_CELL_*_OVFL`）+ 字典压缩（`WT_CELL_VALUE_COPY`） | 压缩开关下全量对拍 + 文件体积表 |
-| **T2.7** 🚧 | **compressor API**：`add_compressor` + `compression=` 配置；先内建 RLE，再挂真 snappy（`ext/compressors/snappy/`） | 解锁 `compression="snappy"` runner |
-| Leaderboard 🚧 | 压缩率 vs ops/s 曲线（snappy / RLE / none 三档） | — |
+| `make build` | `cmake --build build -j` | 编译 |
+| `make test` | 逐个跑 `build/bin/*_test` | 全量测试 |
+| `make p2-test` | 只跑 `build/bin/p2_*_test` | 单段测试 |
+| `make grade` | `python3 scripts/grade.py build/bin/*_test` | 逐项打分 |
+| `make todo` | `python3 scripts/todo.py [-p P2] [-c]` | 待写函数导航 |
+| `make probe` | 目标 `abi_probe_obj` | 编译期合同 |
+| `make probe-link` | 目标 `abi_link_check` | 链接期合同 |
+| `make shared` | 目标 `wiredtiger` | `build/libwiredtiger.so` |
+| `make asan` / `tsan` | 独立构建目录 + `-DTINYWT_SANITIZE=` | 越界 / 数据竞争 |
+| `make cp1` / `cp2` | `scripts/checkpoint.sh 1\|2` | 人工门 |
+| `make capstone` | `scripts/capstone.sh` | C1–C4 |
 
-**复习题（已完成部分）**：① 为什么 internal key 是子树下界而不是精确键？
-（答到 suffix compression 的源码依据算满分）② 内存页三件套各自的 reconcile 归并
-顺序？③ prefix 与 suffix 压缩分别作用于哪层页、为什么不能互换？
+**评分怎么算**：一个测试函数 = 一个评分项。harness 打印
+`RESULT <proj> <name> <status> <pass> <fail>`，`grade.py` 只做汇总。
+状态只有四种：`PASS` / `FAIL`（写错了）/ `NOTIMPL`（还没写）/ `ERROR`（抛了别的异常）。
 
----
+> `make asan` / `tsan` 走 `ctest`，退出码跟着测试走 —— 骨架阶段会因为大量
+> `NOTIMPL` 整体非 0，这是正常的。它的用途是**在你实现之后**确认没有越界 / 数据竞争：
+> 真正的信号是输出里有没有 `AddressSanitizer` / `ThreadSanitizer` 报告。
 
-## 4. Project 3 —— 数据操作层：C API / Cursor / WAL（⬜ 待做：见 docs/P3.md）
+**骨架初始分**：
 
-对标 BusTub P3（Query Execution）：从「能存」到「能用」。cursor 就是 tinywt 的
-"executor"——每个操作都是一次 cursor 驱动的树遍历。
+```
+P0  1/3    P1  0/3    P2  0/13    P3  2/23    P4  0/7    TOTAL 3/49 (6.1%)
+```
 
-**真 WT**：`src/include/wiredtiger.h`、`src/config/`、`src/meta/`、
-`src/btree/bt_curnext.c / bt_curprev.c / bt_cursor.c`、`src/log/`。
-
-### Task 3.0 —— Primer：合同对齐（对标 BusTub "Before You Begin"）
-
-`compat/wiredtiger.h` 已就位（生成物）；`Status` 与真 WT 错误码**错位 3**，
-需在 C ABI 边界做映射（`WT_NOTFOUND=-31803`、`WT_ROLLBACK=-31800`，详见
-`docs/P3.md` T3.0）；
-`src_c/` 建 extern "C" 层骨架（opaque 句柄包 C++ 内核）。
-
-### Task 3.1 —— System Catalog 的对应物：URI + 元数据 + config（← BusTub P3 Task 1 System Catalog，几乎一一对应）
-
-- `wiredtiger_config_parser_open` + `WT_CONFIG_PARSER::{next,close,get}`：
-  语法 `k=v`、嵌套 `()`、引号串、逗号分隔（对标 `src/config/config.c` 词法，~200 行）。
-- `table:X` → `file:X.wt` 映射；**元数据用 tinywt 自己的 Btree 存**
-  （对标 `WiredTiger.wt` 就是一张表）。
-- `session->create` 解析 `leaf_page_max/internal_page_max/split_pct/type=file`
-  接进现有 `Config`；多表多 session 管理。
-- `wiredtiger_strerror`。
-
-### Task 3.2 —— Cursor 写路径（← executors 的 Insert）
-
-`WT_CURSOR` 函数表：`open/reset/set_key/set_value/insert`；
-隐式事务顶住显式事务的位（T3.4 转正）。
-
-> **Checkpoint 1（= T3.0–T3.2）**：hn01 链接真 wtperf，**跑通缩水版 populate**
-> （icount 500m→1m，populate_threads=1），链接零缺符号。
-
-### Task 3.3 —— Cursor 读路径与遍历（← SeqScan/Update/Delete executors）
-
-- `next` 状态机：insert 链流与磁盘 entries 流**归并取小**；tombstone/不可见版本
-  在归并循环内跳过；页耗尽沿 walk 栈换页。坑：`ins_head[i]` 间隙下标语义
-  （i==entries.size() = 页尾）先写进注释。
-- `prev` 对称实现（跳表加 prev 数组；真 WT 无 prev 靠重建——Written Q）。
-- `search`（精确/下界两态）、`get_key/get_value`、`update/remove`，
-  reader snapshot 绑定 cursor open 时刻。
-
-### Task 3.4 —— 事务 API + 增量操作（← 剩余 executors）
-
-`begin/commit/rollback_transaction`；`cursor->modify` + `wiredtiger_calc_modify`
-（WT_MODIFY_REC 增量 entries）；`session->truncate`（游标范围删）。
-
-### Task 3.5 —— WAL + 崩溃恢复（BusTub 没有的，补齐持久性收口）
-
-- LogRecord（布局已核实 log.h:311）：`u32 len | u32 checksum | u8 flags
-  (COMPRESSED 0x01/ENCRYPTED 0x02) | payload`；`LOG_ALIGN=128`（:51）；
-  LSN=`(file<<32)|offset`（:60）；首块 `WT_LOG_DESC{magic,version,allocsize}`。
-- 逻辑日志 `TXN_BEGIN / ROW_PUT / ROW_REMOVE / TXN_COMMIT`（对标
-  `WT_LOGC_KEY_FORMAT "III"` log.h:83）；**先日志后内存页**的次序写进注释。
-- flush（`fdatasync`；单 slot，组提交留可选池 O10）。
-- checkpoint 交互：`ckpt_lsn` 入超级块；日志只留 ≥ckpt_lsn。
-- recovery：扫日志（checksum 坏/半条即停，尾部截断合法）→ 只重放有 COMMIT
-  的事务 → 立刻做一次新 checkpoint。
-
-> **Checkpoint 2（= T3.3–T3.5）**：真 wtperf 跑 `50r50u / 80r20u` 缩水版（单线程组）；
-> 再跑 `close_conn=false` 的 crash-恢复链（populate → kill -9 → 重开 → 继续）。
-
-### Leaderboard（P3）
-
-populate / 读写混合 runner 的 ops/s 排行，按 cache_size × 线程数出曲线。
-（BusTub P3 leaderboard 同款玩法。）
-
-### 单元测试（p3-test）
-
-全序/反向遍历对拍 std::map；删改混合；seek 三边界；遍历中 split；
-日志截断/坏 checksum/未提交丢弃/ckpt 裁剪/随机 crash 对拍（×4 种子）。
-
-### Written Questions
-
-1. WT 为什么把 config 解析做成公开 API（`wiredtiger_config_parser_open`）？
-2. 元数据用 B-Tree 存而不是文件头，对崩溃恢复意味着什么？
-3. `WT_INSERT` 跳表为什么没有 prev 指针？反向遍历的代价？
-4. logical redo vs InnoDB physical redo（cell 前缀压缩为什么让物理重放不可行）？
-5. 恢复完为何立刻 checkpoint 而不是直接开服？
+那 3 项绿的是**契约自检**（错误码数值、`strerror`），不用写代码，改坏了就会红。
 
 ---
 
-## 5. Project 4 —— 并发与多版本（⬜ 待做：见 docs/P4.md）
+## 7. 规则（破坏这些会直接失去验收资格）
 
-对标 BusTub P4（MVCC）。tinywt 的版本链 = update 链 + History Store，
-watermark = RTS 的 stable timestamp——同构到可以直接套题。
-
-**真 WT**：`src/include/hazard.h`、`btmem.h` 的 `WT_REF` 状态机、
-`src/history/`（1909 行）、`src/txn/txn_rollback_to_stable.c`。
-
-### Task 4.1 —— 并发 L1（对标 BusTub P2 的 Concurrency task，放这里是依赖顺序）
-
-tree 级 `shared_mutex`；split/checkpoint 独占；多线程对拍（4 线程随机
-put/remove/get == std::map 终态，分片校验，×2 种子）。
-
-### Task 4.2 —— 版本链基础设施：WT_REF 状态机 + hazard pointer（← BusTub P4 Task 1 "Mock Version Chain" 位置：先造基础设施）
-
-- hazard pointer 简化版：每 session 固定 16 槽，evict 前全表扫描比对。
-- `WT_REF` 状态 `DISK→READING→MEM→LOCKED` 单向 CAS 落进 `Ref`；
-  并发 page_in 去重；eviction 抢占 exclusive ref。
-- TSan 构建跑干净。
-
-### Task 4.3 —— History Store：版本存储（← BusTub P4 Task 2/3 TxnMgr+GC）
-
-- HS = 另一棵普通 B-Tree（复用 P1），key=`(btree_id, user_key, start_ts降序)`，
-  value=旧版本或 tombstone + stop_ts。
-- reconcile 写入侧：链上存在"对 checkpoint 快照不可见"的旧版本 → 搬 HS
-  （修掉现在"直接丢弃"的行为）。
-- 读取下探：内存链无可见版本 → 查 HS（前缀匹配 user_key，取 start_ts ≤ read_ts
-  最大者）；通路是 `Btree::set_history_reader(&hs)`（`HistoryReader` 抽象基类，
-  避免 `twt_btree.h` ↔ `twt_hs.h` 循环依赖）。
-
-### Task 4.4 —— 回滚语义：未提交 reconcile + RTS（← BusTub P4 的 rollback/abort）
-
-- reconcile 遇未决 update → 保留"磁盘镜像 + 未决修改列表"形态
-  （真 WT 的 `WT_PM_REC_MULTIBLOCK / saved updates`）。
-- RTS：超级块 dirty_shutdown 标志 → open 时回滚未提交/晚于 stable 的版本。
-
-### Task 4.5 —— Watermark：时间窗口聚合 + stable 点（← BusTub P4 Task 4 Watermark，几乎一一对应）
-
-- page/cell 级 stop_ts 聚合最小版（够 RTS 用；完整 `WT_TIME_AGGREGATE` 位打包
-  留可选池 O5）。
-- stable timestamp 即全局 watermark：HS 回收、RTS 截断都从它出发。
-
-> **Checkpoint（= T4.1–T4.5）**：真 wtperf 跑 `evict-btree.wtperf` 原配置
-> （16 读线程 + eviction=threads_max=8，icount 缩水）+ `long-txn-btree` 缩水版。
-
-### Leaderboard（P4）
-
-`evict-btree-stress` 多线程 ops/s；旧快照长读场景下 p99 不劣化断言。
-
-### 单元测试（p4-test）
-
-旧快照跨 eviction 仍可读；旧快照下探 HS（钩子被调用、传的是读快照而非 stable）；
-模拟 crash+未提交 → RTS 后一致；全部快照关闭后 HS 版本可回收；
-读线程慢遍历 + 写线程疯狂淘汰无悬空（ASan）。
-
-### Written Questions
-
-1. eviction 为什么需要 LOCKED 状态而不能直接锁页？
-2. hazard pointer 相比 rwlock 的优势（无写者优先问题/无锁读路径）？
-3. WT 4.0 为什么用独立 History Store 替换 3.x 的 lookaside table？
-4. RTS 为什么从 stable 点回滚而不是最新点？和 MongoDB majority commit point 什么关系？
-5. watermark 停滞（有长事务挂着）时，HS 和 cache 各会发生什么？
+1. 只改标了 `UNIMPLEMENTED` 的函数体；**不要改** `include/` 里的类型定义、成员顺序、
+   函数签名 —— 那些是 ABI 契约，改了 `make probe` 会红，`wtperf` 会崩。
+2. **不要改 `test/` 和 `scripts/grade.py`**。测试就是评分标准。
+3. 真 `wiredtiger.h` 在 `third_party/wiredtiger/include/`，不要往 `include/tinywt/` 里塞。
+4. 提交纪律：一个子项目一个 commit，消息带编号（`P2/T2.3: 叶分裂`）。
+5. 交作业前：`make grade` 要 49/49，`grep -rn UNIMPLEMENTED src/` 要为空，
+   `make cp1 && make cp2 && make capstone` 全过。
 
 ---
 
-## 6. Capstone —— 结业全量验收（⬜ 待做：见 docs/CAPSTONE.md）
+## 8. 建议排期
 
-（15-445 没有第五个作业，但这是它的 leaderboard 文化的自然延伸。）
+以「每天 2–3 小时、按子项目推进」估：
 
-| Task | 内容 |
-|---|---|
-| C1 | runner 全家桶：`populate / 50r50u / 80r20u / rdonly / evict-btree / evict-btree-stress / checkpoint-stress / insert-rmw / long-txn-btree / index-pareto-btree`（缩水 icount，其余原配置） |
-| C2 | wt 工具子集：补 23 个 `__wt_*` 工具类 helper（config_merge/json/buf/getopt），链接真 `wt`，跑 `list / create / drop / dump -x / load / verify / stat` |
-| C3 | 对照组：hn01 编译真 WT，同 runner 双跑，出对比表（ops/s、p99、文件大小、checkpoint 时长） |
-| C4 | 双 leaderboard 汇总：P3（吞吐）+ P4（淘汰压力）曲线合并成最终报告 |
+| 阶段 | 内容 | 手感 |
+|---|---|---|
+| 第 1 天 | P0 全部 | 半天就够；varint 写错会让 P2 的 descend 莫名失败 |
+| 第 2–3 天 | P1 全部 | 坑在 extent 回收 |
+| 第 4–9 天 | P2 T2.1–T2.5 | **最难的一段**，约占全部工作量 40% |
+| 第 10 天 | P2 T2.6–T2.7 | 编码家族是体力活 |
+| 第 11–14 天 | P3 T3.1–T3.3 | C ABI 变参拆包最容易出错 |
+| 第 15–17 天 | P3 T3.4–T3.5 | 事务可见性 + WAL 三条恢复规则 |
+| 第 18–20 天 | P4 全部 | T4.2 / T4.3 是重点；T4.1 只是加锁 |
+| 第 21 天+ | Capstone | 真工具一旦跑起来，剩下都是「对齐行为」 |
+
+卡住时的判断顺序：**先 `make todo P=Pn` 看是不是漏了函数，再 `make pN-test` 看第一个红的是哪项**。
+不要一上来就怀疑算法错 —— 多数情况是前一个 Project 的某个函数没写对。
 
 ---
 
-## 7. 真工具依赖面（合同，全部已核实）
+## 9. 真工具依赖面（合同，已核实）
 
-### wtperf（7 源文件 + testutil grep 实测）
+### wtperf（7 源文件 + testutil）
 
 ```
 wtperf = bench/wtperf/{wtperf,wtperf_config,wtperf_misc,track,wtperf_throttle,
-        wtperf_truncate,idle_table_cycle}.c + test/utility/ 按需(4028行,公开API依赖极少)
+        wtperf_truncate,idle_table_cycle}.c + test/utility/ 按需
 公开函数: wiredtiger_open / wiredtiger_strerror /
-          wiredtiger_config_parser_open(wtperf 解析配置就调它) / wiredtiger_calc_modify
+          wiredtiger_config_parser_open（wtperf 解析配置就调它）/ wiredtiger_calc_modify
 方法面:   close(18) open_cursor(14) open_session(12) set_key(9) get_key(9)
           set_value(7) create(7) next(6) begin_txn(6) search(5) rollback(5)
           insert(5) reset(4) commit(3) checkpoint(3) update(2) remove(2)
           prev(2) drop(2) truncate(1) modify(1)
-无 statistics: 游标；压缩器是 .so 扩展，不跑压缩 runner 不需要
 ```
 
-### wt 工具（可行性已核实）
+### wt 工具
 
-`src/utilities/*.c` 只调 **23 个 `__wt_*` 内部函数，全是工具类**
+`src/utilities/*.c` 只调 23 个 `__wt_*` 内部函数，全是工具类
 （`__wt_config_merge / __wt_json_* / __wt_buf_* / __wt_getopt`），不碰存储内核。
-补齐即可链接真 `wt`。
+补齐即可链接真 `wt` —— 这是 C2 的前置。
 
-### 环境与错误码
+### 错误码（只差 3 的两个负数）
 
-真工具链在 hn01（Linux, cmake 齐全）跑；本地 Windows/MinGW 保留单测。
-**注意**：`twt::Status` 的数值必须与真 WT **逐一对齐**（`S_NOTFOUND = -31803`
-= `WT_NOTFOUND`，`S_ROLLBACK = -31800` = `WT_ROLLBACK`），C ABI 边界只做恒等映射。
-`compat/probe.c` 用 `_Static_assert` 把这些数字钉死，`make probe` 编译期就能抓到
-偏差；`make probe-link` 进一步把缺的接口交给链接器报符号。详见 `docs/P3.md` T3.0。
+| 常量 | 值 |
+|---|---|
+| `WT_ROLLBACK` | -31800 |
+| `WT_DUPLICATE_KEY` | -31801 |
+| `WT_ERROR` | -31802 |
+| `WT_NOTFOUND` | -31803 |
+| `WT_PANIC` | -31804 |
+| `WT_RESTART` | -31805 |
+
+`test/contract/abi_probe.c` 用 `_Static_assert` 钉死；`make probe` 编译期就能抓到偏差，
+`make probe-link` 进一步把缺的接口交给链接器。
 
 ---
 
-## 8. 可选池（O1–O12，按性价比排序，全量给出）
+## 10. 刻意简化（别在这里死磕）
+
+| 简化 | 真 WT | 为什么这样定 |
+|---|---|---|
+| `HistoryStore` 内部用 `std::map` | 一棵真 B-Tree（`WiredTigerHS.wt`） | 要学的是**搬家与下探的时机**，不是再写一棵树 |
+| base page 不带时间戳 | base 页有 `start_ts/stop_ts` | 只有 insert-only 的键能靠「没有 base 行」判断下探；够测 T4.3 |
+| 压缩只要求 `NONE` + `RLE` | snappy / zlib / zstd 扩展 | 压缩器接口才是知识点，算法实现不是 |
+| 窗口聚合只做 `min(stable, pinned)` | 完整 `WT_TIME_AGGREGATE` 位打包 | 位打包是体力活，见可选池 O5 |
+| 单线程 log slot，无组提交 | `log_slot.c` 组提交 | 见可选池 O10 |
+
+## 11. 可选池（O1–O12，按性价比排序）
 
 | # | 主题 | 真 WT 定位 | 规模感 | 解锁什么 |
 |---|---|---|---|---|
-| O1 | **test/format 式随机压测器** | `test/format/` | 2–3 天 | WT 的 torture test：随机配置+crash+校验，**性价比最高** |
+| O1 | **test/format 式随机压测器** | `test/format/` | 2–3 天 | 随机配置 + crash + 校验，**性价比最高** |
 | O2 | 多 checkpoint 保留 + named checkpoint | `block_ckpt.c`、turtle 文件 | 1–2 天 | `checkpoint-stress` 原配置、`wt list -c` |
 | O3 | backup 游标 | `src/cursor/cur_backup.c` | 2 天 | backup 系 runner |
-| O4 | column-store | `src/btree/col_*.c` | 3–4 天 | `wt` col 命令、O1 覆盖面、面试题 |
+| O4 | column-store | `src/btree/col_*.c` | 3–4 天 | `wt` col 命令、O1 覆盖面 |
 | O5 | 完整 `WT_TIME_AGGREGATE` 位打包 | `src/include/` | 1 天 | reconcile 与 WT 完全同构 |
 | O6 | statistics 游标 | `src/cursor/cur_stat.c` | 2 天 | `wt stat`、perf_run_py 自动分析 |
 | O7 | workgen | `bench/workgen/` | 一周+ | 新 benchmark 框架（不建议先做） |
-| O8 | test/suite python 子集 | `test/suite/` | 逐周扩 | 覆盖最广的官方测试（Capstone 后当回归） |
+| O8 | test/suite python 子集 | `test/suite/` | 逐周扩 | 覆盖最广的官方测试 |
 | O9 | LSM tree | `src/lsm/` | 数周 | lsm runner（**不建议**，规模不成比例） |
-| O10 | log slot 并发组提交 | `src/log/log_slot.c` | 2 天 | P3-T3.5 回头补真 slot 机制 |
+| O10 | log slot 并发组提交 | `src/log/log_slot.c` | 2 天 | 回头补真 slot 机制 |
 | O11 | salvage | `src/btree/bt_slvg.c` | 3 天 | `wt salvage`（学 block/extent 很好） |
-| O12 | 磁盘格式完全对齐真 WT | `block.h/cell.h` 全量 | 长期 | 真 `wt` 直接打开 tinywt 文件（终极彩蛋） |
+| O12 | 磁盘格式完全对齐真 WT | `block.h/cell.h` 全量 | 长期 | 真 `wt` 直接打开 tinywt 文件 |
 
 ---
 
-## 9. 执行顺序与开工基建
+## 12. 附：真 WT 源码对照索引
 
-```
-P3（API+Cursor+WAL）──► P4（并发+HS+RTS）──► P2 补 T2.6/T2.7（压缩家族）──► Capstone
-   CP1: wtperf populate      CP: evict-btree 多线程         解锁 snappy runner
-   CP2: 50r50u + crash 链
-```
-
-**开工首日（半天）**：
-1. `test/tinywt_test.cpp` 拆 `p0~p2` + `harness.hpp`（随机/对拍/crash 模拟/计时）。
-2. `Makefile` 加 `pN-test` 目标矩阵。
-3. `compat/wiredtiger.h`（拷真头）+ `src_c/` extern "C" 骨架。
-4. hn01：拉 `bench/wtperf` + `test/utility` + `src/utilities` 的编译脚本。
-5. 本文件 → `tinywt/docs/PROJECTS.md`；每个 Project 开工立 `docs/pN.md` 任务书。
-
----
-
-## 10. 骨架 ↔ 测试项映射（`make grade` 的评分单位）
-
-一个测试函数 = 一个评分项。名字里的 `Px/Ty` 就是本文件的任务号。
-
-| 任务 | 评分项（`make grade` 里显示的名字） | 测试文件 |
-|---|---|---|
-| T0.1 | `P0/T0.1 构建骨架 + 错误码契约` | `p0_defs_test.cpp` |
-| T0.2 | `P0/T0.2 varint (LEB128)`、`P0/T0.2 crc32` | `p0_defs_test.cpp` |
-| T1.1 | `P1/T1.1 块读写 + 校验` | `p1_block_cell_test.cpp` |
-| T1.2 | `P1/T1.2 extent + 超级块` | `p1_block_cell_test.cpp` |
-| T1.3 | `P1/T1.3 cell 编解码` | `p1_block_cell_test.cpp` |
-| T2.1 | `P2/T2.1 内存页三件套 + page_in` | `p2_btree_test.cpp` |
-| T2.2 | `P2/T2.2 descend（5000 键回读）` | `p2_btree_test.cpp` |
-| T2.3 | `P2/T2.3 分裂 + 对拍 std::map` | `p2_btree_test.cpp` |
-| T2.4 | `P2/T2.4 reconcile + eviction` | `p2_btree_test.cpp` |
-| T2.5 | `P2/T2.5 checkpoint + 重开 + verify` | `p2_btree_test.cpp` |
-| T2.6 | `P2/T2.6 编码家族（suffix/overflow/dict）` | `p2_codec_test.cpp` |
-| T2.7 | `P2/T2.7 compressor API（RLE）` | `p2_compress_test.cpp` |
-| T3.0 | `P3/T3.0 strerror 与错误码`、`P3/T3.0 错误码契约（Status -> WT_*）`（2 项，无需写代码） | `p3_api_test.cpp` |
-| T3.1 | `P3/T3.1 config parser（真 ABI）`、`P3/T3.1 重开连接：元数据恢复 + 数据仍在` | `p3_api_test.cpp` |
-| T3.2 | `P3/T3.1+T3.2 open/create/insert/search`（写路径与 T3.1 串在一条链上测） | `p3_api_test.cpp` |
-| T3.3 | `P3/T3.3 cursor 读路径`（7 个用例，含「遍历中 split」） | `p3_cursor_test.cpp` |
-| T3.4 | `P3/T3.4 …`（5 个用例：读自己的写 / 未提交不可见 / 回滚精确摘链 / 快照隔离 / 写冲突） | `p3_txn_test.cpp` |
-| T3.5 | `P3/T3.5 …`（6 个用例：WAL 重放 / 未提交丢弃 / 截断 / 尾部截断 / 中间损坏→CORRUPT / 随机 crash ×4） | `p3_wal_test.cpp` |
-| T4.1 | `P4/T4.1 并发 L1（4 线程对拍 std::map）` | `p4_concurrency_test.cpp` |
-| T4.2 | `P4/T4.2 WT_REF 状态机 + hazard pointer`、`P4/T4.2 读线程 + 疯狂淘汰` | `p4_concurrency_test.cpp` |
-| T4.3 | `P4/T4.3 History Store`、`P4/T4.3 旧快照下探（HS 钩子接线）` | `p4_hs_rts_test.cpp` |
-| T4.4 | `P4/T4.4 未提交 reconcile + RTS` | `p4_hs_rts_test.cpp` |
-| T4.5 | `P4/T4.5 watermark（stable 点）+ 时间窗口聚合` | `p4_hs_rts_test.cpp` |
-| C1–C4 | 不计入 `grade`，由 `make capstone` 单独 gate | `scripts/capstone.sh` |
-
-**Checkpoint / Leaderboard 不是评分项**：Checkpoint 是「过了才能进下一段」的
-人工 gate（`make cp1` / `make cp2` 两个目标跑对应的 runner 子集）；
-Leaderboard 是把数字填进 docs/LEADERBOARD.md，不影响正确性得分。
-
-**评分机制**（`test/harness.hpp` + `scripts/grade.py`）：
-
-- `RUN(fn)` 给每个测试函数套异常防火墙：命中 `UNIMPLEMENTED` 只把这一项记 `TODO`，
-  进程继续，后面的项照跑 —— 否则骨架下第一个函数就把进程炸了，没法逐项打分。
-- C ABI 层不能跨语言抛异常，所以 `src_c` 用 `UNIMPLEMENTED_RC(what, rc)` 打全局标记，
-  harness 结束时读标记，同样记 `TODO` 而不是误报 `FAIL`。
-- 每个二进制打印 `RESULT`/`SCORE` 行，`grade.py` 只做聚合，不解释测试语义。
+| tinywt | 真 WT |
+|---|---|
+| `include/tinywt/common/defs.h` | `src/include/error.h`、`misc.h`、`intpack_inline.h` |
+| `include/tinywt/storage/block.h` | `src/include/block.h`、`src/block/block_{open,read,write,ext,addr}.c` |
+| `include/tinywt/storage/cell.h` | `src/include/cell.h`、`src/cell/cell_{pack,unpack}.c` |
+| `include/tinywt/storage/page.h` | `src/include/btmem.h`（`WT_PAGE` / `WT_ROW` / `WT_UPDATE` / `WT_INSERT`） |
+| `include/tinywt/btree/btree.h` | `src/btree/bt_{read,search,split,write,sync,curnext,curprev,cursor}.c` |
+| `src/btree/reconcile.cpp` | `src/reconcile/rec_write.c` |
+| `include/tinywt/compression/compress.h` | `src/compress/`、`ext/compressors/` |
+| `include/tinywt/txn/txn.h` | `src/include/txn.h`、`src/txn/txn.c`、`txn_inline.h` |
+| `include/tinywt/txn/history_store.h` | `src/history/hs.c`、`src/txn/txn_rollback_to_stable.c` |
+| `include/tinywt/wal/log.h` | `src/include/log.h`、`src/log/log.c`、`log_recover.c` |
+| `include/tinywt/concurrency/hazard.h` | `src/include/hazard.h`、`src/support/hazard.c` |
+| `src/api/*` | `src/conn/`、`src/cursor/`、`src/session/`（对外 ABI 层） |

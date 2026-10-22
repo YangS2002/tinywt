@@ -60,7 +60,7 @@ PROJ_TITLE = {
 def scan():
     """返回 [(proj, task, name, relpath, lineno), ...]"""
     items = []
-    for sub in ("src", "src_c"):
+    for sub in ("src",):
         for f in sorted((ROOT / sub).rglob("*.cpp")):
             for lineno, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
                 m = TAG.search(line)

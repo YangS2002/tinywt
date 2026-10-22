@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从真 WT 的 wiredtiger.in 生成 compat/wiredtiger.h（API 合同头）。
+"""从真 WT 的 wiredtiger.in 生成 third_party/wiredtiger/include/wiredtiger.h（API 合同头）。
 
 为什么自己生成而不是直接拷：
   WT 仓库里只有模板 src/include/wiredtiger.in，wiredtiger.h 是构建产物
@@ -20,7 +20,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_IN = os.path.join(ROOT, "third_party", "wt", "src", "include", "wiredtiger.in")
-OUT = os.path.join(ROOT, "compat", "wiredtiger.h")
+OUT = os.path.join(ROOT, "third_party", "wiredtiger", "include", "wiredtiger.h")
 
 # 与 RELEASE_INFO / auto.cmake 的 Linux 探测结果一致
 SUBS = {
@@ -68,7 +68,7 @@ def main() -> int:
         f" * 生成命令：python3 scripts/gen_wiredtiger_h.py {os.path.relpath(src, ROOT)}\n"
         " *\n"
         " * 这是 tinywt 的 C ABI 合同：只实现被测试工具引用到的符号，\n"
-        " * 缺什么链接器就报什么（见 compat/probe.c）。\n"
+        " * 缺什么链接器就报什么（见 test/contract/abi_probe.c）。\n"
         " */\n"
     )
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:

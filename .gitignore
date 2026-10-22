@@ -1,21 +1,31 @@
-# 构建产物
+# ---------------------------------------------------------------- 构建产物
 build/
+build-*/
 *.o
 *.d
 *.a
+*.so
 *.exe
+compile_commands.json
+Testing/
 
-# 外部源码（scripts/fetch_wt_sources.sh 拉取，不入库）
-third_party/
+# ---------------------------------------------------------------- 外部源码
+# scripts/fetch_wt_sources.sh 拉的真 WT 源码子集；可随时重拉，不入库。
+third_party/wt/
+# 完整 WT 克隆（可选，WT_SRC 指向这里）
+external/
 
-# 编辑器 / 系统
+# ★ 但真头文件必须入库：它是 ABI 合同，克隆下来就要能 make probe。
+!third_party/wiredtiger/include/wiredtiger.h
+
+# ---------------------------------------------------------------- 运行时产物
+bench/results/
+*.wt
+WiredTigerHS*
+*.log
+
+# ---------------------------------------------------------------- 编辑器 / 系统
 .vscode/
 .idea/
 *.swp
 .DS_Store
-
-# Capstone 运行时产物
-bench/results/
-
-# 完整 WT 克隆（可选，WT_SRC 指向这里）
-external/

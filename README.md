@@ -1,139 +1,84 @@
-# tinywt —— 用重写 WiredTiger 骨架来学存储引擎
+# tinywt
 
-一个 **CMU 15-445 式的存储引擎作业集**：仓库里是框架（头文件、数据结构、
-测试、任务书），实现全部留空。你要做的是把 `UNIMPLEMENTED(...)` 换成真正的代码，
-最后让 **WiredTiger 官方工具 wtperf 直接链接** `libtinywt.a` 跑起来。
+用**重写 WiredTiger 的骨架**来学存储引擎 —— 按 CMU 15-445（BusTub）的方式组织：
+仓库里给类型、接口、测试和评分器，实现全部留空，你把 `UNIMPLEMENTED(...)` 换成代码。
 
-- 语言：C++17（内核）+ C ABI（对外）
-- 结构：**内存页 ≠ 磁盘页**，update 链 + insert 跳表 + reconcile，和真 WT 一一对应
-- 规模：5 个 Project / 49 个测试项 + 1 个 Capstone
-- 契约头：`compat/wiredtiger.h` 是**真** WT 11.3.x 的头文件，不是仿写的
+- 内核 C++17，对外 C ABI（直接用**真** `wiredtiger.h`，不是仿写的）
+- 结构上忠实对齐 WT：**内存页 ≠ 磁盘页**、update 链 + insert 跳表、reconcile、
+  LRU 淘汰、checkpoint、MVCC、History Store、RTS、hazard pointer
+- 终局验收：真 `wtperf` / `wt` 直接链接 `build/libwiredtiger.so` 跑起来；
+  **缺哪个接口，链接器当场报哪个符号**
+
+> 完整任务书（项目地图、子项目清单、验收标准、排期）在
+> **[docs/PROJECTS.md](docs/PROJECTS.md)** ← 从这里开始。
 
 ---
 
 ## 快速开始
 
 ```bash
-make todo         # 我这段要写哪些函数？（按 Task 分组，带 file:line）
-make grade        # 逐项打分（未实现记 TODO，不中断）
-make test         # 跑全部测试，任一不过就非零退出
-make p2-test      # 只跑 P2
-make probe        # 编译期契约：错误码数值 + 头文件可独立编译
-make probe-link   # 链接期契约：缺哪个接口，链接器就报哪个符号
-make cp1 / cp2    # Checkpoint gate（过了才准进下一段）
-make shared       # build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
-make capstone     # C1–C4 结业验收
-make asan / tsan  # sanitizer 构建（ASan 抓越界，TSan 抓数据竞争；跑完 make clean）
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j   # 或直接 make
+make todo              # 我这段要写哪些函数？（按子项目分组，带 file:line）
+make grade             # 逐项打分：49 个评分项，未实现记 TODO，不中断
+make p2-test           # 只跑 P2
 ```
 
 骨架初始状态：
 
 ```
-project      score   title
-P0         1/3      33.3%   基础件（varint / crc32 / 错误码契约）
-P1         0/3       0.0%   块管理器 + cell 编解码
-P2         0/13      0.0%   Buffer Pool + B+Tree（含 codec / 压缩）
-P3         2/23      8.7%   C ABI + 事务 API + WAL
-P4         0/7       0.0%   并发 / hazard / HS / RTS / watermark
-TOTAL      3/49      6.1%
+P0  1/3    P1  0/3    P2  0/13    P3  2/23    P4  0/7    TOTAL 3/49 (6.1%)
+待写：156 个函数（P0 5 · P1 20 · P2 41 · P3 72 · P4 18）
 ```
 
-那 3 项已经绿的是**契约自检**（错误码数值、`strerror`），不需要写代码，
-但改坏了就会红。
+那 3 项绿的是**契约自检**（错误码数值、`strerror`），不用写代码，改坏了就会红。
 
 ---
 
-## 边界：什么给定，什么留给你写
+## 项目地图
 
-按 CMU 15-445 的分法：**数据结构、接口签名、测试、评分器全给；核心算法留空。**
-判断标准只有一条 —— 打了 `UNIMPLEMENTED("Px/Ty.z ...")` 标签的函数体要你写。
-没打标签的代码不要改动（要加私有 helper 请加在对应的 .cpp 里，别动 `include/` 的布局）。
+| Project | 子项目 | 评分项 | 你能学到什么 | 任务书 |
+|---|---|---|---|---|
+| **P0** 基础件 | T0.1–T0.2 | 3 | LEB128 / CRC32C / 错误码契约 | [p0](docs/projects/p0_foundation.md) |
+| **P1** 块管理器 | T1.1–T1.3 | 3 | 块读写与校验、extent 三表、cell 编码 | [p1](docs/projects/p1_block_manager.md) |
+| **P2** B+Tree | T2.1–T2.7 | 13 | 内存页三件套、descend、分裂、reconcile、eviction、checkpoint、编码家族 | [p2](docs/projects/p2_btree.md) |
+| **P3** C ABI / 事务 / WAL | T3.0–T3.5 | 23 | 方法表与变参、cursor 遍历、事务可见性、日志重放 | [p3](docs/projects/p3_api_txn_wal.md) |
+| **P4** 并发 / MVCC | T4.1–T4.5 | 7 | tree 级锁、WT_REF 状态机、hazard、History Store、RTS、watermark | [p4](docs/projects/p4_concurrency_mvcc.md) |
+| **Capstone** | C1–C4 | 不计分 | 链接真 `wtperf` / `wt`，与真 WT 对照 | [capstone](docs/projects/capstone.md) |
 
-| 给定（读它、别改它） | 你写（156 个函数） |
-|---|---|
-| `include/*.h` 全部类型、位布局、enum、成员变量 | 每个 `UNIMPLEMENTED` 的函数体 |
-| `test/**` 测试与 `harness.hpp`（异常防火墙 / `RUN` / `SCORE`） | —— |
-| `compat/wiredtiger.h`（真 WT 头）+ `probe.c` 数值契约 | —— |
-| `src_c/` 的内部结构体、`twt_*_create/destroy` 生命周期、`iface` 首成员布局、变参约定注释 | 方法表里每个 `cur_*` / `ses_*` / `conn_*` 的函数体（`...` 的拆包也归你） |
-| `Makefile` / `scripts/grade.py` / checkpoint / capstone | —— |
-| 页结构与 update 链的**字段**定义 | 链的维护、reconcile 归并、split、evict 策略 |
-| WAL 记录格式常量 | 序列化、fsync 顺序、重放规则 |
-| `twt_hs.h` 的 HS 接口 | HS 的插入/下探/裁剪，RTS 回滚，watermark 计算 |
-
-查看当前还剩什么：
-
-```bash
-make todo              # 全量，按 Px/Ty 分组
-make todo P=P2         # 只看某一段
-make todo P=P4/T4.3    # 精确到单个 Task
-make todo c=1          # 只看每个 Task 的剩余函数数
 ```
-
-`make todo` 的解析对象就是标签本身，所以它天然不会过期：
-你写完一个函数（删掉标签），列表就少一项。
-
-**刻意留白的简化**（别在这里死磕，真 WT 比这复杂得多）：
-
-- `HistoryStore` 用 `std::map` 顶着，不要求你再写一棵 B-Tree
-- base page 不带时间戳 → 只有 insert-only 的键能靠「没有 base 行」判断下探
-- 压缩器只要求 `NONE` 与 `RLE`，snappy/zlib 走 `WT_COMPRESSOR` 注册表但不评分
-- 页内无 `WT_ROW` 的时间窗口聚合（T4.5 只做 `oldest = min(stable, pinned)`）
-
----
-
-## 任务一览
-
-| Project | 内容 | 关键点 | 测试项 |
-|---|---|---|---|
-| **P0** | varint、crc32、错误码契约 | LEB128 互逆；`WT_NOTFOUND == -31803` | 3 |
-| **P1** | 块管理器 + cell 编解码 | `off==0` 非法；`size` vs `alloc`；前缀压缩 | 3 |
-| **P2** | Buffer Pool + B+Tree | descend / split / reconcile / eviction / checkpoint / 编码家族 / 压缩 | 13 |
-| **P3** | C ABI + 事务 + WAL | 方法表、变参、元数据表、游标遍历、精确摘链、日志重放 | 23 |
-| **P4** | 并发 / MVCC | 读写锁、WT_REF + hazard、History Store、RTS、watermark | 7 |
-| **Capstone** | 链接真 `wtperf` / `wt` | 链接器就是评分器（C1–C4，不计入 grade） | — |
-
-每个 Project 的任务书：
-
-- [P0/P1/P2 总表](docs/PROJECTS.md#四任务表)
-- [P3 任务书](docs/P3.md)
-- [P4 任务书](docs/P4.md)
-- [背景阅读：WT 机制与踩坑](docs/WT-NOTES.md)
+P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2)
+                          └─▶ cp2 (T3.3–T3.5)
+                                   │
+                                   ▼
+                                  P4 ──▶ capstone (C1–C4)
+```
 
 ---
 
 ## 目录
 
 ```
-include/      数据结构与接口（不要改签名）
-  twt_defs.h     Status / Slice / Addr / varint / crc32
-  twt_block.h    块管理器（BlockHeader / Extent / SuperBlock）
-  twt_cell.h     cell 描述符位布局 + 编码家族（suffix / overflow / dict）
-  twt_page.h     内存页三件套（Entry / Update / Insert / Ref + WT_REF 状态）
-  twt_btree.h    B+Tree + CursorState + 并发锁
-  twt_compress.h 压缩器接口（RLE / 可插拔）
-  twt_txn.h      P3/T3.4 事务状态机与快照
-  twt_log.h      P3/T3.5 WAL 记录格式与恢复
-  twt_hazard.h   P4/T4.2 hazard pointer
-  twt_hs.h       P4/T4.3–T4.5 History Store / RTS / watermark
-src/          C++17 内核（★★ 主战场）
-  defs.cpp  block.cpp  cell.cpp  page.cpp  btree.cpp  reconcile.cpp
-  compress.cpp  txn.cpp  wal.cpp  hazard.cpp  hs.cpp
-src_c/        C ABI 层（extern "C"，包 C++ 内核）
-  config.cpp  conn.cpp  cursor.cpp  twt_capi.h
-compat/       真 wiredtiger.h（生成物）+ probe.c（契约探针）
-test/         harness.hpp + pN_*_test.cpp（不要改）
-scripts/      grade.py、todo.py、checkpoint.sh、capstone.sh、gen_wiredtiger_h.py、fetch_wt_sources.sh
-docs/         PROJECTS.md / P0–P4.md / CAPSTONE.md / LEADERBOARD.md / WT-NOTES.md
-```
-
-## 执行顺序（不可跳步）
-
-```
-P0 ─▶ P1 ─▶ P2 ─▶ P3 ─┬─▶ cp1 (T3.0–T3.2)
-                       └─▶ cp2 (T3.3–T3.5)
-                                │
-                                ▼
-                               P4 ─▶ capstone (C1–C4)
+CMakeLists.txt        构建的唯一事实来源
+Makefile              便捷封装（make grade / p2-test / asan …）
+docs/PROJECTS.md      ★ 总任务书
+docs/projects/        每个 Project 的机制讲解与踩坑
+include/tinywt/       公共头（布局 = ABI 契约，不要改）
+  common/defs.h         Status / Slice / Addr / varint / crc32
+  storage/{block,cell,page}.h
+  btree/btree.h         B+Tree + CursorState + 并发锁 + HistoryReader
+  compression/compress.h
+  txn/{txn,history_store}.h
+  wal/log.h
+  concurrency/hazard.h
+src/                  实现（★ 主战场），目录与 include/tinywt/ 一一对应
+  api/                  C ABI 层（capi.h 是私有头，不对外）
+test/
+  support/harness.hpp   RUN / CASE / SCORE / 异常防火墙
+  contract/abi_probe.c  错误码数值 + iface 布局（编译期 + 链接期合同）
+  p0/ p1/ p2/ p3/ p4/   与 Project 同编号
+scripts/              grade.py / todo.py / checkpoint.sh / capstone.sh
+third_party/
+  wiredtiger/include/wiredtiger.h   真 WT 11.3.x 头文件（合同来源）
 ```
 
 ---
@@ -168,12 +113,12 @@ P0 ─▶ P1 ─▶ P2 ─▶ P3 ─┬─▶ cp1 (T3.0–T3.2)
 
 ## 规则（三条）
 
-1. 只改标了 `TODO` 的函数体，别动签名、别动测试。
-2. 不要改 `compat/` 和 `include/` 里的类型定义 —— 那是 ABI 契约。
-3. 交作业前 `make grade` 要 49/49，`grep -rn UNIMPLEMENTED src/ src_c/` 要为空，
+1. 只改标了 `UNIMPLEMENTED` 的函数体，别动签名、别动 `include/` 的布局、别动 `test/`。
+2. `third_party/wiredtiger/include/wiredtiger.h` 是**真**头文件，不要改也不要替换。
+3. 交作业前：`make grade` 49/49，`grep -rn UNIMPLEMENTED src/` 为空，
    `make cp1 && make cp2 && make capstone` 全过。
 
-详细规则见 [docs/PROJECTS.md](docs/PROJECTS.md#三规则)。
+详细规则见 [docs/PROJECTS.md §7](docs/PROJECTS.md#7-规则破坏这些会直接失去验收资格)。
 
 ---
 
@@ -191,6 +136,6 @@ without breaking backward compatibility"*：
 | `WT_PANIC` | -31804 |
 | `WT_RESTART` | -31805 |
 
-`WT_NOTFOUND` 和 `WT_ROLLBACK` 只差 3。如果 internal `Status` 写错一位，
-`wtperf` 会把「键不存在」当成「事务冲突」无限重试。
-`compat/probe.c` 用 `_Static_assert` 把这条契约钉死。
+`WT_NOTFOUND` 和 `WT_ROLLBACK` 只差 3。内部 `Status` 写错一位，`wtperf` 就会把
+「键不存在」当成「事务冲突」无限重试。`test/contract/abi_probe.c` 用
+`_Static_assert` 把这条契约钉死，`make probe` 在编译期就能抓到偏差。

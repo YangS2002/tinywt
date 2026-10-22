@@ -34,7 +34,7 @@ hazard pointer + 淘汰路径的成本。
 | long-txn-btree | 512M | 8 | 4 | — | — | watermark 停滞场景 |
 
 **P4 的硬约束**：旧快照长读场景下 p99 不能比「没有长事务」时劣化一个数量级。
-劣化了说明 watermark 把 HS 拖爆了（见 `docs/P4.md` T4.5）。
+劣化了说明 watermark 把 HS 拖爆了（见 `docs/projects/p4_concurrency_mvcc.md` T4.5）。
 
 ## 压缩率 vs 吞吐（P2-T2.6/T2.7）
 
