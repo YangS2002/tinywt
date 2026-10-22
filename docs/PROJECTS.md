@@ -351,9 +351,9 @@ P3（API+Cursor+WAL）──► P4（并发+HS+RTS）──► P2 补 T2.6/T2.7�
 | T2.5 | `P2/T2.5 checkpoint + 重开 + verify` | `p2_btree_test.cpp` |
 | T2.6 | `P2/T2.6 编码家族（suffix/overflow/dict）` | `p2_codec_test.cpp` |
 | T2.7 | `P2/T2.7 compressor API（RLE）` | `p2_compress_test.cpp` |
-| T3.0 | `P3/T3.0 合同对齐（错误码 + strerror）` | `p3_api_test.cpp` |
-| T3.1 | `P3/T3.1 config parser`、`P3/T3.1 元数据恢复` | `p3_api_test.cpp` |
-| T3.2 | `P3/T3.2 cursor 写路径` | `p3_api_test.cpp` |
+| T3.0 | `P3/T3.0 strerror 与错误码`、`P3/T3.0 错误码契约（Status -> WT_*）`（2 项，无需写代码） | `p3_api_test.cpp` |
+| T3.1 | `P3/T3.1 config parser（真 ABI）`、`P3/T3.1 重开连接：元数据恢复 + 数据仍在` | `p3_api_test.cpp` |
+| T3.2 | `P3/T3.1+T3.2 open/create/insert/search`（写路径与 T3.1 串在一条链上测） | `p3_api_test.cpp` |
 | T3.3 | `P3/T3.3 cursor 读路径`（6 个用例） | `p3_cursor_test.cpp` |
 | T3.4 | `P3/T3.4 …`（5 个用例：读自己的写 / 未提交不可见 / 回滚精确摘链 / 快照隔离 / 写冲突） | `p3_txn_test.cpp` |
 | T3.5 | `P3/T3.5 …`（5 个用例：WAL 重放 / 未提交丢弃 / 截断 / 尾部截断 / 中间损坏→CORRUPT） | `p3_wal_test.cpp` |
