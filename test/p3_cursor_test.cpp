@@ -16,6 +16,7 @@
 #define TWT_PROJECT "P3"
 
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -297,6 +298,88 @@ test_scan_across_pages()
     db.close();
 }
 
+/* ---------------------------------------------------------------- 7. 遍历中 split */
+static void
+test_scan_during_split()
+{
+    CASE("P3/T3.3 遍历中 split（游标位置不丢、不重、不乱序）");
+    DB db;
+    if (!db.open("p3_cur_split")) {
+        CHECK(false);
+        return;
+    }
+    const int kOrig = 400;
+    fill(db.cur, kOrig);
+
+    /* 定位到中间，先走 50 步 —— 游标现在停在第 250 条附近 */
+    db.cur->set_key(db.cur, kstr(200).c_str());
+    CHECK(db.cur->search(db.cur) == 0);
+
+    int advanced = 0;
+    while (advanced < 50) {
+        if (db.cur->next(db.cur) != 0)
+            break;
+        ++advanced;
+    }
+    CHECK(advanced == 50);
+
+    /*
+     * 用第二个游标插入 200 条「夹在现有键中间」的键（后缀 x），
+     * 强制把游标正在走的那些叶子拆开。
+     *
+     * 这是遍历路径最容易被踩坏的时刻：游标缓存着叶子页的指针/位置，
+     * split 之后那个页可能已经被拆、被 reconcile、被淘汰。
+     * 正确实现要么改成「按上一个 key 重新 seek」，要么在 split 时修游标栈。
+     */
+    WT_CURSOR *ins = nullptr;
+    CHECK(db.ses->open_cursor(db.ses, "table:t", nullptr, nullptr, &ins) == 0);
+
+    int inserted = 0;
+    if (ins != nullptr) {
+        for (int i = 200; i < 400; ++i) {
+            std::string k = kstr(i) + "x"; /* 字典序：key-000251 < key-000251x < key-000252 */
+            ins->set_key(ins, k.c_str());
+            ins->set_value(ins, "interleaved");
+            if (ins->insert(ins) == 0)
+                ++inserted;
+        }
+        (void)ins->close(ins);
+    }
+    CHECK(inserted == 200);
+
+    /* 继续原游标：严格升序、不重复，且原本存在的键一个都不能丢 */
+    std::string prev;
+    std::set<std::string> got;
+    bool ascending = true;
+    int seen = 0;
+
+    while (db.cur->next(db.cur) == 0) {
+        char *k = nullptr;
+        if (db.cur->get_key(db.cur, &k) != 0 || k == nullptr) {
+            ascending = false;
+            break;
+        }
+        std::string key(k);
+        if (!prev.empty() && key <= prev)
+            ascending = false;
+        prev = key;
+        got.insert(key);
+        ++seen;
+    }
+    CHECK(ascending);
+
+    int missing = 0;
+    for (int i = 251; i < kOrig; ++i)
+        if (got.find(kstr(i)) == got.end())
+            ++missing;
+    CHECK(missing == 0);
+
+    /* 至少要走过没走完的 149 条原始键；新插入的 x 键看实现，不作要求 */
+    CHECK(seen >= kOrig - 251);
+
+    db.close();
+}
+
 int
 main()
 {
@@ -308,5 +391,6 @@ main()
     RUN(test_seek_boundaries);
     RUN(test_scan_after_delete);
     RUN(test_scan_across_pages);
+    RUN(test_scan_during_split);
     return harness_report();
 }

@@ -28,7 +28,10 @@
 
 #include <cstdio>
 #include <fstream>
+#include <map>
+#include <random>
 #include <string>
+#include <vector>
 
 #include "harness.hpp"
 #include "twt_btree.h"
@@ -347,6 +350,131 @@ test_mid_file_corruption()
     }
 }
 
+/* ---------------------------------------------------------------- 6. 随机 crash ×4 */
+static void
+test_random_crash()
+{
+    CASE("P3/T3.5 随机 crash ×4 种子（状态必须等于某个已提交前缀）");
+
+    struct ROp {
+        bool remove;
+        std::string key, val;
+    };
+
+    for (int seed = 1; seed <= 4; ++seed) {
+        Fixture fx(("p3_wal_crash" + std::to_string(seed)).c_str());
+
+        std::vector<ROp> seq;        /* 已提交事务的写操作，按提交顺序展开 */
+        std::vector<size_t> txn_end; /* 每个已提交事务结束后 seq 的长度 */
+
+        /* --- 造日志：70% 提交，30% 半途而废；另有一段只出现在未提交事务里的键 --- */
+        {
+            LogManager log;
+            CHECK_ST(log.open(fx.logpath));
+
+            std::mt19937 rng((unsigned)(seed * 7919));
+            u64 txnid = 1;
+
+            for (int t = 0; t < 12; ++t, ++txnid) {
+                const bool commit = (rng() % 100) < 70;
+                const int nops = 1 + (int)(rng() % 3);
+
+                CHECK_ST(log.txn_begin(txnid));
+                for (int o = 0; o < nops; ++o) {
+                    const unsigned kind = rng() % 100;
+                    if (kind < 75) {
+                        const std::string k = "c" + std::to_string(rng() % 10);
+                        const std::string v =
+                          "v" + std::to_string(txnid) + "_" + std::to_string(o);
+                        CHECK_ST(log.put(txnid, Slice(k), Slice(v)));
+                        if (commit)
+                            seq.push_back({false, k, v});
+                    } else if (kind < 90) {
+                        const std::string k = "c" + std::to_string(rng() % 10);
+                        CHECK_ST(log.remove(txnid, Slice(k)));
+                        if (commit)
+                            seq.push_back({true, k, ""});
+                    } else {
+                        /* 只出现在未提交事务里的键：重放后必须一个都不存在 */
+                        const std::string k = "u" + std::to_string(rng() % 8);
+                        CHECK_ST(log.put(txnid, Slice(k), Slice("ghost")));
+                    }
+                }
+                if (commit) {
+                    CHECK_ST(log.txn_commit(txnid));
+                    txn_end.push_back(seq.size());
+                }
+            }
+            CHECK_ST(log.close());
+        }
+
+        /* --- 在随机位置砍断日志：模拟进程在写日志时被杀 --- */
+        {
+            std::error_code ec;
+            const auto sz = fs::file_size(fx.logpath, ec);
+            CHECK(!ec && sz > 32);
+            const auto third = (std::uintmax_t)(sz / 3);
+            const auto cut = third + ((std::uintmax_t)seed * 131) % third;
+            CHECK(cut > 0 && cut < sz);
+            fs::resize_file(fx.logpath, cut, ec);
+            CHECK(!ec);
+        }
+
+        Btree bt;
+        CHECK_ST(bt.open(fx.dbpath_, small_cfg()));
+
+        LogManager log;
+        CHECK_ST(log.open(fx.logpath));
+        CHECK_ST(log.replay(bt)); /* 尾部半条是正常崩溃 */
+
+        /* --- 不变量 1：未提交的键一个都不能出现 --- */
+        int ghost = 0;
+        for (int k = 0; k < 8; ++k) {
+            Val out;
+            if (bt.get(Slice("u" + std::to_string(k)), out) != S_NOTFOUND)
+                ++ghost;
+        }
+        CHECK(ghost == 0);
+
+        /*
+         * --- 不变量 2：重放后的状态必须等于「前 c 个已提交事务」的后像 ---
+         * c 是多少取决于截断点落在哪，测试不可能预知，所以枚举所有事务边界。
+         * 这一条同时能抓住：半个事务被应用、事务顺序被打乱、删除被漏掉。
+         */
+        auto matches = [&](size_t cut_txns) -> bool {
+            const size_t lim = (cut_txns == 0) ? 0 : txn_end[cut_txns - 1];
+            std::map<std::string, std::string> want;
+            for (size_t i = 0; i < lim; ++i) {
+                if (seq[i].remove)
+                    want.erase(seq[i].key);
+                else
+                    want[seq[i].key] = seq[i].val;
+            }
+            for (int k = 0; k < 10; ++k) {
+                const std::string key = "c" + std::to_string(k);
+                Val out;
+                const Status s = bt.get(Slice(key), out);
+                auto it = want.find(key);
+                if (it == want.end()) {
+                    if (s != S_NOTFOUND)
+                        return false;
+                } else if (s != S_OK || sv(out) != it->second) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        bool matched = false;
+        for (size_t c = 0; c <= txn_end.size() && !matched; ++c)
+            matched = matches(c);
+        CHECK(matched);
+
+        CHECK_ST(log.close());
+        CHECK_ST(bt.close());
+    }
+}
+
 int
 main()
 {
@@ -357,5 +485,6 @@ main()
     RUN(test_truncate_upto);
     RUN(test_tail_truncation);
     RUN(test_mid_file_corruption);
+    RUN(test_random_crash);
     return harness_report();
 }

@@ -11,6 +11,7 @@
 #   make shared      # 产出 build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
 #   make cp1 / cp2   # Checkpoint gate（不计分，没过不准进下一段）
 #   make capstone    # C1–C4 结业验收
+#   make todo        # 我这部分要写哪些函数？（按 Task 分组，带 file:line）
 #   make asan/tsan   # sanitizer 构建（ASan 抓越界，TSan 抓数据竞争）
 #   make clean
 #
@@ -42,7 +43,7 @@ TESTSRC   := $(wildcard test/*_test.cpp)
 TESTBIN   := $(patsubst test/%_test.cpp,build/%_test,$(TESTSRC))
 TESTNAMES := $(patsubst test/%_test.cpp,%,$(TESTSRC))
 
-.PHONY: all build test grade clean probe probe-link shared cp1 cp2 capstone asan tsan
+.PHONY: all build test grade clean probe probe-link shared cp1 cp2 capstone asan tsan todo
 
 all: test
 
@@ -147,6 +148,11 @@ tsan:
 # 结业验收：C1 runner 全家桶 / C2 wt 工具 / C3 对照组 / C4 leaderboard
 capstone: $(TESTBIN)
 	@bash scripts/capstone.sh
+
+# 「我该写什么」导航器：把所有 UNIMPLEMENTED 按 Task 分组列出来。
+# 参数进：make todo P=P2（只看某一段）/ make todo c=1（只看计数）
+todo:
+	@python3 scripts/todo.py $(if $(P),-p $(P)) $(if $(c),-c)
 
 -include $(OBJ:.o=.d) $(PICOBJ:.o=.d)
 

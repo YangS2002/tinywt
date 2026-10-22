@@ -97,6 +97,32 @@ struct UpdOwner {
     }
 };
 
+/*
+ * FakeHistory --
+ *     只用来验证「get 会不会下探、下探时传的 read_ts 对不对」的假 HS。
+ *     真 HS 的读写语义由 T4.3 的第一个用例单独测，这里不重复。
+ *
+ *     为什么用假的：下探是 Btree 与 HS 之间的**接线**问题。用真 HS 测，
+ *     一旦失败就分不清是「get 没调」还是「HS 查错了」。
+ */
+struct FakeHistory : twt::HistoryReader {
+    int calls = 0;
+    u64 last_ts = 0;
+
+    Status read(const Key &key, u64 read_ts, Val &out, bool &found) override
+    {
+        ++calls;
+        last_ts = read_ts;
+        if (sv(key) == "k1" && read_ts >= 15) {
+            out = vv("hs-v15");
+            found = true;
+        } else {
+            found = false;
+        }
+        return S_OK;
+    }
+};
+
 } /* namespace */
 
 /* ---------------------------------------------------------------- 1. History Store */
@@ -217,6 +243,71 @@ test_history_store()
         CHECK_ST(bt.close());
     }
 
+    rmpath(path);
+}
+
+/* ---------------------------------------------------------------- 1b. 下探接线 */
+static void
+test_old_snapshot_descend()
+{
+    CASE("P4/T4.3 旧快照下探（HS 钩子接线）");
+    const std::string path = dbpath("p4_hs_descend");
+    rmpath(path);
+
+    Config cfg = small_cfg();
+    cfg.max_cached_pages = 4; /* cache 只够 4 页 → 制造真实淘汰 */
+
+    Btree bt;
+    CHECK_ST(bt.open(path, cfg));
+
+    /* 先灌数据把 cache 搅动起来（证明读路径是在一个真的会淘汰的树上跑的） */
+    for (int i = 0; i < 300; ++i)
+        CHECK_ST(bt.put(Slice(kstr(i)), Slice(vstr(i))));
+    CHECK(bt.stats().evictions > 0);
+
+    /*
+     * k1 是 insert-only 键：镜像里没有 base，只有内存链上的 ts=20 版本。
+     * 这正好对应「老版本已经在 HS 里」的形态（本版 base 无时间戳，
+     * 见 twt_btree.h 里 HistoryReader 的说明）。
+     */
+    CHECK_ST(bt.put(Slice("k1"), Slice("mem-v20"), 1, 20));
+
+    FakeHistory fh;
+    bt.set_history_reader(&fh);
+
+    /* 1) 新快照：链上可见 → 不许下探 */
+    {
+        Val out;
+        CHECK_ST(bt.get(Slice("k1"), out, UINT64_MAX, 20));
+        CHECK(sv(out) == "mem-v20");
+        CHECK(fh.calls == 0);
+    }
+
+    /* 2) 旧快照：链上不可见 → 必须下探，且 read_ts 要原样传下去 */
+    {
+        Val out;
+        CHECK_ST(bt.get(Slice("k1"), out, UINT64_MAX, 10));
+        CHECK(sv(out) == "hs-v15");
+        CHECK(fh.calls == 1);
+        CHECK(fh.last_ts == 10);
+    }
+
+    /* 3) 通道是可持续的：不是一次性状态 */
+    {
+        Val out;
+        CHECK_ST(bt.get(Slice("k1"), out, UINT64_MAX, 10));
+        CHECK(sv(out) == "hs-v15");
+        CHECK(fh.calls == 2);
+    }
+
+    /* 4) 摘掉通道 → 只能回落；镜像里没有 base，所以是 NOTFOUND */
+    bt.set_history_reader(nullptr);
+    {
+        Val out;
+        CHECK_RC(bt.get(Slice("k1"), out, UINT64_MAX, 10), S_NOTFOUND);
+    }
+
+    CHECK_ST(bt.close());
     rmpath(path);
 }
 
@@ -392,6 +483,7 @@ main()
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("tinywt P4: history store / RTS / watermark\n");
     RUN(test_history_store);
+    RUN(test_old_snapshot_descend);
     RUN(test_rollback_to_stable);
     RUN(test_watermark);
     return harness_report();

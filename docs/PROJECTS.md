@@ -216,7 +216,8 @@ put/remove/get == std::map 终态，分片校验，×2 种子）。
 - reconcile 写入侧：链上存在"对 checkpoint 快照不可见"的旧版本 → 搬 HS
   （修掉现在"直接丢弃"的行为）。
 - 读取下探：内存链无可见版本 → 查 HS（前缀匹配 user_key，取 start_ts ≤ read_ts
-  最大者）。
+  最大者）；通路是 `Btree::set_history_reader(&hs)`（`HistoryReader` 抽象基类，
+  避免 `twt_btree.h` ↔ `twt_hs.h` 循环依赖）。
 
 ### Task 4.4 —— 回滚语义：未提交 reconcile + RTS（← BusTub P4 的 rollback/abort）
 
@@ -239,8 +240,9 @@ put/remove/get == std::map 终态，分片校验，×2 种子）。
 
 ### 单元测试（p4-test）
 
-旧快照跨 eviction 仍可读；模拟 crash+未提交 → RTS 后一致；全部快照关闭后
-HS 版本可回收；读线程慢遍历 + 写线程疯狂淘汰无悬空（ASan）。
+旧快照跨 eviction 仍可读；旧快照下探 HS（钩子被调用、传的是读快照而非 stable）；
+模拟 crash+未提交 → RTS 后一致；全部快照关闭后 HS 版本可回收；
+读线程慢遍历 + 写线程疯狂淘汰无悬空（ASan）。
 
 ### Written Questions
 
@@ -354,12 +356,12 @@ P3（API+Cursor+WAL）──► P4（并发+HS+RTS）──► P2 补 T2.6/T2.7�
 | T3.0 | `P3/T3.0 strerror 与错误码`、`P3/T3.0 错误码契约（Status -> WT_*）`（2 项，无需写代码） | `p3_api_test.cpp` |
 | T3.1 | `P3/T3.1 config parser（真 ABI）`、`P3/T3.1 重开连接：元数据恢复 + 数据仍在` | `p3_api_test.cpp` |
 | T3.2 | `P3/T3.1+T3.2 open/create/insert/search`（写路径与 T3.1 串在一条链上测） | `p3_api_test.cpp` |
-| T3.3 | `P3/T3.3 cursor 读路径`（6 个用例） | `p3_cursor_test.cpp` |
+| T3.3 | `P3/T3.3 cursor 读路径`（7 个用例，含「遍历中 split」） | `p3_cursor_test.cpp` |
 | T3.4 | `P3/T3.4 …`（5 个用例：读自己的写 / 未提交不可见 / 回滚精确摘链 / 快照隔离 / 写冲突） | `p3_txn_test.cpp` |
-| T3.5 | `P3/T3.5 …`（5 个用例：WAL 重放 / 未提交丢弃 / 截断 / 尾部截断 / 中间损坏→CORRUPT） | `p3_wal_test.cpp` |
+| T3.5 | `P3/T3.5 …`（6 个用例：WAL 重放 / 未提交丢弃 / 截断 / 尾部截断 / 中间损坏→CORRUPT / 随机 crash ×4） | `p3_wal_test.cpp` |
 | T4.1 | `P4/T4.1 并发 L1（4 线程对拍 std::map）` | `p4_concurrency_test.cpp` |
 | T4.2 | `P4/T4.2 WT_REF 状态机 + hazard pointer`、`P4/T4.2 读线程 + 疯狂淘汰` | `p4_concurrency_test.cpp` |
-| T4.3 | `P4/T4.3 History Store` | `p4_hs_rts_test.cpp` |
+| T4.3 | `P4/T4.3 History Store`、`P4/T4.3 旧快照下探（HS 钩子接线）` | `p4_hs_rts_test.cpp` |
 | T4.4 | `P4/T4.4 未提交 reconcile + RTS` | `p4_hs_rts_test.cpp` |
 | T4.5 | `P4/T4.5 watermark（stable 点）+ 时间窗口聚合` | `p4_hs_rts_test.cpp` |
 | C1–C4 | 不计入 `grade`，由 `make capstone` 单独 gate | `scripts/capstone.sh` |

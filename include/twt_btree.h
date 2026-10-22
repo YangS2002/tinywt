@@ -86,6 +86,36 @@ struct CursorState {
     bool valid = false;
 };
 
+/*
+ * HistoryReader —— P4/T4.3「读取下探」的钩子
+ *
+ * 为什么是钩子而不是直接引用 HistoryStore：
+ *   twt_hs.h 需要 Btree（extract_old_versions 要遍历树），如果 Btree 反过来
+ *   也要 HistoryStore，就是循环 include。真 WT 里没有这个问题 —— HS 是
+ *   一棵普通的 B-Tree，读路径通过「再开一个 cursor」访问它，天然解耦。
+ *
+ * 语义（get 的实现必须照这个来）：
+ *   1. 内存链上有对 read_ts 可见的版本 → 直接返回，**不调用**本接口
+ *   2. 链上没有，且镜像里**没有这一行**（insert-only 键，base 为空）→ 调 read()
+ *        S_OK + found=true   → 用 out（可能是 tombstone，此时调用方返回 NOTFOUND）
+ *        S_OK + found=false  → 这个键在 read_ts 上不存在 → NOTFOUND
+ *   3. 链上没有、但镜像里有 base → 回落 base
+ *
+ * ★ 第 3 条是本版的简化，也是它唯一的语义缺口：
+ *   本版的 base 不携带 start_ts（真 WT 存在 cell 的 second_desc 里）。
+ *   所以「reconcile 之后 base 比读者新」这种情况判不出来，只能返回 base。
+ *   要修这个缺口 = 把时间窗口持久化进 cell，见可选池 O5。
+ *   跨 checkpoint 的旧快照读因此只保证到「HS 里已有的版本」，不保证到 base。
+ *
+ * 不调用它的后果：insert-only 键的老版本一旦进 HS，旧快照就读不到了 ——
+ * 静默返回 NOTFOUND，不报错。
+ */
+class HistoryReader {
+public:
+    virtual ~HistoryReader() = default;
+    virtual Status read(const Key &key, u64 read_ts, Val &out, bool &found) = 0;
+};
+
 class Btree {
 public:
     Btree() = default;
@@ -98,8 +128,23 @@ public:
     Status close();
 
     Status put(Slice key, Slice val, u64 txnid = 1, u64 ts = 1);
+
+    /*
+     * get --
+     *     沿 descend 找到键，然后按「update 链 → HistoryStore → base」回落：
+     *       1. 链上找第一个对 (reader_txnid, read_ts) 可见的版本
+     *       2. 链上没有，且镜像里没有这一行 → 问 history_reader_（T4.3）
+     *       3. 镜像里有 base → 回落 base（本版简化，见 HistoryReader 的注释）
+     *
+     *     ★ 第 2 步不能省。insert-only 键的老版本进 HS 之后，跳过它就会
+     *       让旧快照读到「键不存在」（静默错误，不报错）。
+     */
     Status get(Slice key, Val &out, u64 reader_txnid = UINT64_MAX, u64 read_ts = UINT64_MAX);
     Status remove(Slice key, u64 txnid = 1, u64 ts = 1);
+
+    /* --- P4/T4.3：挂上历史版本的读取通道（nullptr = 不下探） --- */
+    void set_history_reader(HistoryReader *r) { history_reader_ = r; }
+    HistoryReader *history_reader() const { return history_reader_; }
 
     /* checkpoint：把所有脏页 reconcile 落盘，然后持久化超级块 */
     Status checkpoint();
@@ -229,6 +274,8 @@ private:
     size_t cached_ = 0;
 
     mutable std::shared_mutex latch_; /* P4/T4.1 */
+
+    HistoryReader *history_reader_ = nullptr; /* P4/T4.3：非拥有指针 */
 };
 
 } /* namespace twt */
