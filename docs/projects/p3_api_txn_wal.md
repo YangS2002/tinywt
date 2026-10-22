@@ -8,12 +8,13 @@
 >
 > | 子项目 | 内容 | 函数 | 评分项 |
 > |---|---|---|---|
-> | T3.0 | 错误码契约 + strerror（**已给**） | 0 | 2 |
+> | T3.0 | 错误码契约 + strerror + version（**已给**） | 0 | 2 |
 > | T3.1 | config parser / conn / 元数据 | 5 | 2 |
 > | T3.2 | cursor 写路径 | 21 | 1（与 T3.1 串成一条链测） |
 > | T3.3 | cursor 读路径与遍历 | 16 | 7 |
 > | T3.4 | 事务 API + modify/truncate | 21 | 5 |
 > | T3.5 | WAL + 崩溃恢复 | 9 | 6 |
+> | T3.6 | 工具面内部 ABI（34 个 `__wt_*`） | 34 | 0（由 Capstone C1/C2 验收） |
 >
 > **与原顺序的差异**：WT 里 log 与 checkpoint 同属持久化（LSN 互相对齐）；这里把
 > T3.5 放在 P3 末尾，是因为要先有完整的 C ABI 链路，`wtperf` 才跑得起来。
@@ -395,6 +396,54 @@ Btree bt; bt.open(db);
 LogManager log2; log2.open(p);
 log2.replay(bt);   // 必须 S_OK，且只还原有 COMMIT 的事务
 ```
+
+---
+
+## T3.6 工具面内部 ABI（0 个评分项，由 Capstone C1/C2 验收）
+
+T3.0–T3.5 只覆盖 `wiredtiger.h` 里的**公开**接口。真工具不止用公开接口。
+
+```
+$ nm -D --undefined-only $WT_SRC/build/wt | grep __wt | wc -l
+20
+$ nm -D --undefined-only $WT_SRC/build/bench/wtperf/wtperf | grep __wt | wc -l
+18
+# 并集扣掉 4 个重叠 = 34
+```
+
+这 34 个不是"顺手加的兼容层"，而是**动态链接器点名要的**：`LD_PRELOAD` 我们的 `.so`
+时少一个就 `undefined symbol` 当场起不来。它们集中在 `src/api/wt_tool_abi.cpp`，
+按性质分四组：
+
+| 组 | 个数 | 代表 | 实现难点 |
+|---|---|---|---|
+| 平台胶水 | 14 | `__wt_thread_create` `__wt_sleep` `__wt_random` | 线程 + 计时；`sleep` 单位是(秒,微秒) |
+| 缓冲 / 格式化 / 配置 | 10 | `__wt_buf_fmt` `__wt_config_merge` `__wt_getopt` | 要 `WT_ITEM` 语义，不是裸 `char*` |
+| JSON | 5 | `__wt_json_token` `__wt_json_strncpy` | 手写流式 reader，`dump -x` / `load -j` 用 |
+| 内核元数据与日志 | 5 | `__wt_block_ckpt_decode` `__wt_metadata_get_ckptlist` | **要 P2 的 checkpoint 格式字节级对齐** |
+
+### 为什么没有单测
+
+这 34 个函数的调用方是**外部进程**，不是我们的测试二进制。写单测只能测自己，
+测不出 ABI 对不对。所以验收方式是：
+
+```bash
+make wt-abi     # 符号层：缺口几个 + 还剩几个空桩
+make capstone   # 功能层：C1 十个 runner / C2 wt 七条子命令
+```
+
+**符号齐 ≠ 功能对**：空桩也是导出符号，`nm` 看着是齐的，但 `wt list` 只会打印 usage。
+`make wt-abi` 因此把两层分开报 —— 看到"缺口 0，还有 34 个空桩"才是真实状态。
+
+### 实现顺序（按依赖，不按字母）
+
+1. **`__wt_getopt` 先做**。它是第一堵墙：没它 `wt` 连 `-h` 和子命令都解析不了，
+   所有 C2 步骤都退化成打印 usage。
+2. 平台胶水（`thread_*` / `sleep` / `errno` / `random` / `filename`）。
+   这组一做，wtperf 至少不会死等 worker。
+3. `buf_*` / `scratch` / `strtouq` / `vsnprintf_len_incr`。
+4. JSON。
+5. `block_ckpt_decode` + `metadata_*ckptlist` + `txn_printlog` —— 最难，也最值钱。
 
 ---
 

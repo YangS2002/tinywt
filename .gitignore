@@ -10,10 +10,10 @@ compile_commands.json
 Testing/
 
 # ---------------------------------------------------------------- 外部源码
-# scripts/fetch_wt_sources.sh 拉的真 WT 源码子集；可随时重拉，不入库。
-third_party/wt/
-# 完整 WT 克隆（可选，WT_SRC 指向这里）
+# 完整 WT 克隆 + 构建产物（scripts/wt_tools.sh 生成；可随时重拉，不入库）
 external/
+# 旧版 fetch 脚本留下的空壳目录，已废弃，留着也不影响（lib_wt.sh 会跳过无效树）
+third_party/wt/
 
 # ★ 但真头文件必须入库：它是 ABI 合同，克隆下来就要能 make probe。
 !third_party/wiredtiger/include/wiredtiger.h

@@ -58,7 +58,9 @@ set(TINYWT_CORE_SOURCES
 set(TINYWT_API_SOURCES
     src/api/config.cpp
     src/api/connection.cpp
-    src/api/cursor.cpp)
+    src/api/cursor.cpp
+    # 工具面内部 ABI（34 个 __wt_*）：只被真 wt / wtperf 调用，单测不碰。
+    src/api/wt_tool_abi.cpp)
 
 # ---------------------------------------------------------------- 静态库
 add_library(tinywt STATIC

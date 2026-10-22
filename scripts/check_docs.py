@@ -123,8 +123,8 @@ for line in master.splitlines():
         bad(f"§3 {proj}/{t}: 文档 {df} 函数 / {di} 项，实际 {af} / {ai}")
     else:
         ok(f"§3 {proj}/{t}: {df} 函数 / {di} 项")
-if seen_rows != 23:
-    bad(f"§3 只解析到 {seen_rows} 行任务（应为 23）")
+if seen_rows != 24:
+    bad(f"§3 只解析到 {seen_rows} 行任务（应为 24）")
 
 # ---------------------------------------------------------------- 5. 各项目文档
 for p, path in PROJ_DOCS.items():
@@ -158,7 +158,8 @@ WT_ONLY = ("src/include/", "src/block/", "src/cell/", "src/reconcile/", "src/his
            "src/support/", "src/utilities/", "src/conn/", "src/session/", "src/cursor/",
            "src/btree/bt_", "src/log/", "src/txn/txn.c", "src/txn/txn_rollback", "src/txn/txn_ckpt",
            "src/checksum/", "src/compress/", "src/config/", "src/meta/", "src/lsm/",
-           "test/format/", "test/suite/", "test/pN/", "bench/", "src_c/", "ext/compressors/")
+           "test/format/", "test/suite/", "test/utility/", "test/pN/", "bench/",
+           "src_c/", "ext/compressors/")
 TICK = re.compile(r"`([^`\n]+)`")
 SUFFIX = re.compile(r":\d+(?:[,\-]\d+)*$")
 BRACE = re.compile(r"\{([^{}]+)\}")
@@ -211,7 +212,8 @@ ok(f"Markdown 链接 {nlink} 个")
 mk = (ROOT / "Makefile").read_text(encoding="utf-8")
 targets = set(re.findall(r"^([a-z0-9%-]+):", mk, re.M))
 for need in ("build", "test", "grade", "todo", "probe", "probe-link", "shared",
-             "cp1", "cp2", "capstone", "asan", "tsan", "clean", "p%-test"):
+             "cp1", "cp2", "capstone", "asan", "tsan", "clean", "p%-test",
+             "wt-tools", "wt-abi"):
     ok(f"make {need}") if need in targets else bad(f"Makefile 缺 make {need}")
 
 # ---------------------------------------------------------------- 8. 结构与声明
@@ -234,6 +236,13 @@ for name, cond in [
     ("真 wiredtiger.h 在 third_party", (ROOT / "third_party/wiredtiger/include/wiredtiger.h").exists()),
     ("ABI 探针在 test/contract", (ROOT / "test/contract/abi_probe.c").exists()),
     ("测试按 p0..p4 分目录", all((ROOT / f"test/p{i}").is_dir() for i in range(5))),
+    # 工具面 ABI 的"34 个"是文档里反复引用的数字，必须和代码、构建两处都对得上。
+    # 少一个 = 真 wt / wtperf 会 undefined symbol；多了 = 文档说谎。
+    ("工具面 ABI：34 个 T3.6 函数", len(re.findall(
+        r'UNIMPLEMENTED(?:_RC|_VOID)?\("P3/T3\.6 ',
+        (ROOT / "src/api/wt_tool_abi.cpp").read_text(encoding="utf-8"))) == 34),
+    ("CMake 编入 wt_tool_abi.cpp", "src/api/wt_tool_abi.cpp" in
+        (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")),
 ]:
     ok(name) if cond else bad(name)
 

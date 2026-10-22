@@ -299,6 +299,27 @@ wiredtiger_strerror(int error)
 }
 
 /*
+ * wiredtiger_version --
+ *     已给：库版本。真 `wt` / `wtperf` 启动时会调它做版本自检。
+ *
+ * ★ 为什么必须报 11.3.0 而不是 "tinywt 0.1"：
+ *   我们声明兼容的是 third_party/wiredtiger/include/wiredtiger.h（11.3.0）的 ABI。
+ *   工具拿这个版本号去和它自己编译时的头比，报别的值会被当成"装错了库"。
+ *   版本号和你实现的完整度无关 —— 这是接口契约，不是自夸。
+ */
+extern "C" const char *
+wiredtiger_version(int *majorp, int *minorp, int *patchp)
+{
+    if (majorp != nullptr)
+        *majorp = WIREDTIGER_VERSION_MAJOR;
+    if (minorp != nullptr)
+        *minorp = WIREDTIGER_VERSION_MINOR;
+    if (patchp != nullptr)
+        *patchp = WIREDTIGER_VERSION_PATCH;
+    return WIREDTIGER_VERSION_STRING;
+}
+
+/*
  * wiredtiger_open --
  *     1. connectionp 为空 → WT_ERROR；成功时先置 *connectionp = nullptr。
  *     2. home 为空 → "."。

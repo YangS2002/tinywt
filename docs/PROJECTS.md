@@ -9,7 +9,7 @@
 > **真源码定位**均指 `wiredtiger/wiredtiger` 的 `mongodb-8.0` 分支。
 >
 > **当前仓库状态**：只有骨架（接口 + 数据结构 + 测试 + 任务书），
-> 156 个函数体是 `UNIMPLEMENTED("Px/Ty.z ...")`。跑 `make grade` = 3/49。
+> 190 个函数体是 `UNIMPLEMENTED("Px/Ty.z ...")`。跑 `make grade` = 3/49。
 
 ---
 
@@ -107,13 +107,14 @@ make grade         # 看总分从 3/49 往上走
 | **P0** 编码件与错误码 | T0.1–T0.2 | 3 | 5 | — | `make p0-test` | [p0_foundation](projects/p0_foundation.md) |
 | **P1** 磁盘格式：块 / extent / cell | T1.1–T1.3 | 3 | 20 | P0 | `make p1-test` | [p1_block_manager](projects/p1_block_manager.md) |
 | **P2** 页与写路径 | T2.1–T2.7 | 13 | 41 | P1 | `make p2-test` | [p2_btree](projects/p2_btree.md) |
-| **P3** 对外 ABI：cursor / 事务 / 日志 | T3.0–T3.5 | 23 | 72 | P2 | `cp1` / `cp2` | [p3_api_txn_wal](projects/p3_api_txn_wal.md) |
+| **P3** 对外 ABI：cursor / 事务 / 日志 | T3.0–T3.6 | 23 | 106 | P2 | `cp1` / `cp2` | [p3_api_txn_wal](projects/p3_api_txn_wal.md) |
 | **P4** 版本、时间与并发 | T4.1–T4.5 | 7 | 18 | P3 | `make p4-test` + `asan` / `tsan` | [p4_concurrency_mvcc](projects/p4_concurrency_mvcc.md) |
 | **Capstone** | C1–C4 | 不计分 | 0 | P4 | `make capstone` | [capstone](projects/capstone.md) |
 
 ```
 P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 / catalog / 写路径)
-                          └─▶ cp2 (T3.3–T3.5: 读路径 / 事务 / WAL)
+                          ├─▶ cp2 (T3.3–T3.5: 读路径 / 事务 / WAL)
+                          └─▶ T3.6 (工具面 ABI，由 Capstone C1/C2 验收)
                                    │
                                    ▼
                                   P4 ──▶ Capstone (C1–C4)
@@ -156,16 +157,17 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 
 | T2.6 编码家族 | suffix / overflow / dict | 8 | 4 | 长 value 搬到独立块；字典压缩的 COPY 语义 |
 | T2.7 压缩器 | RLE + 可插拔注册表 | 2 | 3 | 压缩发生在**块写入之前**，不感知 cell |
 
-### P3 —— 对外 ABI：cursor / 事务 / 日志（72 个函数 / 23 项）
+### P3 —— 对外 ABI：cursor / 事务 / 日志（106 个函数 / 23 项）
 
 | 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
 |---|---|---|---|---|
-| T3.0 错误码契约 | **已给**：`Status → WT_*` 恒等映射 | 0 | 2 | 只差 3 的两个负数值 |
+| T3.0 错误码契约 | **已给**：`Status → WT_*` 恒等映射 + `wiredtiger_version` | 0 | 2 | 只差 3 的两个负数值 |
 | T3.1 config + conn + catalog | 配置解析、URI 映射、元数据表 | 5 | 2 | 元数据自己用 B-Tree 存（`WiredTiger.wt`） |
 | T3.2 cursor 写路径 | 方法表、变参拆包、insert/update | 21 | 1 | `iface` 必须首成员；`void(...)` |
 | T3.3 cursor 读路径 | next/prev 状态机、search_near、split 中遍历 | 16 | 7 | 两条流归并取小；**游标位置是页+偏移** |
 | T3.4 事务 API | begin/commit/rollback、modify、truncate | 21 | 5 | 可见性判断；回滚只摘自己的版本 |
 | T3.5 WAL + 恢复 | 记录格式、fsync 顺序、重放规则 | 9 | 6 | 尾部截断合法 / 中间损坏非法 |
+| T3.6 工具面内部 ABI | **跨切面**：34 个 `__wt_*`（真 `wt`/`wtperf` 会来要） | 34 | 0（由 C1/C2 验收） | 符号齐 ≠ 功能对；`nm -D` 量缺口 |
 
 ### P4 —— 版本、时间与并发（18 个函数 / 7 项）
 
@@ -252,10 +254,10 @@ tinywt/
 │   ├── p3/{api,cursor,txn,wal}_test.cpp
 │   └── p4/{concurrency,hs_rts}_test.cpp
 ├── scripts/                    grade.py / todo.py / check_docs.py / checkpoint.sh / capstone.sh
-│                               gen_wiredtiger_h.py / fetch_wt_sources.sh
+│                               lib_wt.sh / wt_tools.sh / wt_abi.py / gen_wiredtiger_h.py
 └── third_party/
     ├── wiredtiger/include/wiredtiger.h   ← 真 WT 11.3.x 头文件（合同来源）
-    └── wt/                               ← 真 WT 源码子集（fetch 脚本拉的，gitignore）
+    └── (external/wiredtiger)             ← 真 WT 完整克隆 + 构建产物（make wt-tools，gitignore）
 ```
 
 **为什么这样分**：
@@ -329,15 +331,19 @@ P0  1/3    P1  0/3    P2  0/13    P3  2/23    P4  0/7    TOTAL 3/49 (6.1%)
 | 第 10 天 | P2 T2.6–T2.7 | 编码家族是体力活 |
 | 第 11–14 天 | P3 T3.1–T3.3 | C ABI 变参拆包最容易出错 |
 | 第 15–17 天 | P3 T3.4–T3.5 | 事务可见性 + WAL 三条恢复规则 |
-| 第 18–20 天 | P4 全部 | T4.2 / T4.3 是重点；T4.1 只是加锁 |
-| 第 21 天+ | Capstone | 真工具一旦跑起来，剩下都是「对齐行为」 |
+| 第 18 天 | P3 T3.6 工具面 ABI | 34 个 `__wt_*`；**先 `__wt_getopt`**，否则 `wt` 连参数都解析不了 |
+| 第 19–21 天 | P4 全部 | T4.2 / T4.3 是重点；T4.1 只是加锁 |
+| 第 22 天+ | Capstone | 真工具一旦跑起来，剩下都是「对齐行为」 |
 
 卡住时的判断顺序：**先 `make todo P=Pn` 看是不是漏了函数，再 `make pN-test` 看第一个红的是哪项**。
 不要一上来就怀疑算法错 —— 多数情况是前一个 Project 的某个函数没写对。
 
 ---
 
-## 9. 真工具依赖面（合同，已核实）
+## 9. 真工具依赖面（合同，`nm` 实测）
+
+> 这一节的所有数字都是**量出来的**，不是数的：`make wt-abi` 拿真二进制的未定义符号
+> 减去我们 `.so` 的导出符号，差集就是缺口。下面的 34 / 20 / 18 都能一条命令复现。
 
 ### wtperf（7 源文件 + testutil）
 
@@ -352,11 +358,37 @@ wtperf = bench/wtperf/{wtperf,wtperf_config,wtperf_misc,track,wtperf_throttle,
           prev(2) drop(2) truncate(1) modify(1)
 ```
 
+**但 wtperf 不是只用公开 API**：它链了 `test/utility/`，那个层用的是 WT 内部封装，
+所以二进制里另带 **18 个 `__wt_*`** 未定义符号（`__wt_thread_create` / `__wt_sleep` /
+`__wt_random` / `__wt_abort` / `__wt_filename` …）。这些不会出现在"wtperf 调了什么"的
+源码阅读里，只有 `nm -D --undefined-only` 才看得见。
+
 ### wt 工具
 
-`src/utilities/*.c` 只调 23 个 `__wt_*` 内部函数，全是工具类
-（`__wt_config_merge / __wt_json_* / __wt_buf_* / __wt_getopt`），不碰存储内核。
-补齐即可链接真 `wt` —— 这是 C2 的前置。
+```
+$ nm -D --undefined-only $WT_SRC/build/wt | grep __wt    → 20 个
+```
+
+20 个，不是 23 个。按性质分四组：
+
+| 组 | 个数 | 例子 | 碰存储内核？ |
+|---|---|---|---|
+| 平台胶水 | 14 | `__wt_thread_create` `__wt_sleep` `__wt_random` `__wt_abort` | 否 |
+| 缓冲 / 格式化 / 配置 | 10 | `__wt_buf_fmt` `__wt_config_merge` `__wt_getopt` `__wt_err_func` | 部分（buf 是 WT_ITEM） |
+| JSON | 5 | `__wt_json_token` `__wt_json_strncpy` | 否 |
+| 内核元数据与日志 | 5 | `__wt_block_ckpt_decode` `__wt_metadata_get_ckptlist` `__wt_txn_printlog` | **是** |
+
+（20 + 18 − 4 个重叠 = 我们一共要给 **34 个**；另有公开 API `wiredtiger_version`，
+`wt` 启动时用它做版本自检，已随 T3.0 给出。）
+
+> ★ 之前这一节写的是"23 个工具类，不碰存储内核"—— **错了，别信**。
+> 两个错误：数字是估的；性质也判断错了。`__wt_block_ckpt_decode` 要解 checkpoint 地址
+> cookie（`src/block/block_addr.c:272`），`__wt_metadata_get_ckptlist` 要读元数据表
+> （`src/meta/meta_ext.c:88`）。C2 之所以难，恰恰难在这 5 个：它们要求你 P2 写出来的
+> checkpoint 格式与真 WT **字节级一致**。
+
+符号齐了只是"动态链接器肯加载"。剩下 34 个空桩还在 `src/api/wt_tool_abi.cpp` 里，
+`make wt-abi` 会连"还有几个是空桩"一起报。
 
 ### 错误码（只差 3 的两个负数）
 

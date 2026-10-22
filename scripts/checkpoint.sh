@@ -14,6 +14,8 @@
 set -u
 
 cd "$(dirname "$0")/.." || exit 2
+# shellcheck source=scripts/lib_wt.sh
+. "$PWD/scripts/lib_wt.sh"
 
 CP="${1:-}"
 case "$CP" in
@@ -39,13 +41,18 @@ echo "   要求：$NEED"
 echo "   真工具面：wtperf $RUNNER"
 echo "=================================================================="
 
+# 空桩的 __wt_thread_create 不建线程，wtperf 主线程会死等 —— 必须设上限。
+WT_TIMEOUT="${WT_TIMEOUT:-600}"
+
 fail=0
 
 # ---------------------------------------------------------------- 门 1：单测子集
 echo
 echo "[1/3] 单测子集"
 for name in $SUBSET; do
-    bin="build/${name}_test"
+    # 产物在 build/bin/（见 CMakeLists 的 CMAKE_RUNTIME_OUTPUT_DIRECTORY），
+    # 不是 build/ 根下 —— 写错这里会让门 1 永远是 MISS，看起来像"没编译"。
+    bin="build/bin/${name}_test"
     log="/tmp/twt_cp${CP}_${name}.log"
     if [ ! -x "$bin" ]; then
         echo "  MISS  $bin（先 make build）"
@@ -77,35 +84,20 @@ fi
 echo
 echo "[3/3] 真 wtperf（drop-in libwiredtiger.so）"
 
-# 两种放法都认：
-#   (a) scripts/fetch_wt_sources.sh 拉的子集 → third_party/wt
-#   (b) 完整 WT 克隆 + cmake 构建          → external/wiredtiger（或 WT_SRC 指定）
-if [ -n "${WT_SRC:-}" ]; then
-    :
-elif [ -d third_party/wt ]; then
-    WT_SRC=third_party/wt
-else
-    WT_SRC=external/wiredtiger
-fi
+# 源码根只有一个来源：lib_wt.sh 的 wt_src_root（无效树不算数）
+WT_SRC=$(wt_src_root) || true
 
 # wtperf 的位置随放法不同，按候选顺序找第一个可执行的
 if [ -z "${WTPERF:-}" ]; then
-    for c in "$WT_SRC/build/bench/wtperf/wtperf" \
-             "$WT_SRC/bench/wtperf/wtperf" \
-             "$WT_SRC/build/wtperf" \
-             "third_party/wt/build/wtperf"; do
-        if [ -x "$c" ]; then
-            WTPERF="$c"
-            break
-        fi
-    done
+    WTPERF=$(wt_find_bin "$WT_SRC/build/bench/wtperf/wtperf" \
+        "$WT_SRC/bench/wtperf/wtperf" \
+        "$WT_SRC/build/wtperf") || true
 fi
 WTPERF="${WTPERF:-$WT_SRC/build/bench/wtperf/wtperf}"
 
 if [ ! -x "$WTPERF" ]; then
     echo "  SKIP  找不到 wtperf（已找过 $WT_SRC 下的几个常见位置）"
-    echo "        → scripts/fetch_wt_sources.sh 拉源码（默认放 third_party/wt）"
-    echo "        → 按其中的说明编出 wtperf，或指向完整克隆：WT_SRC=/path/to/wiredtiger"
+    wt_howto
     echo "        → 然后 make shared（产出 build/libwiredtiger.so）"
     echo "        → 本脚本会用 LD_PRELOAD 把 tinywt 顶上去"
 else
@@ -137,9 +129,15 @@ insert_threads=0
 update_threads=2
 EOF
         fi
-        if LD_PRELOAD="$PWD/build/libwiredtiger.so" "$WTPERF" -O "$CFG" -h "$HOME_DIR" \
-            >"/tmp/twt_cp${CP}_wtperf.log" 2>&1; then
+        rc=0
+        timeout "${WT_TIMEOUT:-600}" env LD_PRELOAD="$PWD/build/libwiredtiger.so" \
+            "$WTPERF" -O "$CFG" -h "$HOME_DIR" >"/tmp/twt_cp${CP}_wtperf.log" 2>&1 || rc=$?
+        if [ $rc -eq 0 ]; then
             echo "  ok    wtperf 跑通（日志 /tmp/twt_cp${CP}_wtperf.log）"
+        elif [ $rc -eq 124 ]; then
+            echo "  FAIL  wtperf 超时（${WT_TIMEOUT:-600}s）：多半是某个 __wt_* 空桩让主线程在等 worker"
+            echo "        不是性能问题 —— 用 make wt-abi 看还有几个空桩"
+            fail=1
         else
             echo "  FAIL  wtperf 退出非 0（日志 /tmp/twt_cp${CP}_wtperf.log）"
             tail -20 "/tmp/twt_cp${CP}_wtperf.log"

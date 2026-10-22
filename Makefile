@@ -12,6 +12,8 @@
 #   make probe            # 编译期合同：错误码数值 + 结构体布局
 #   make probe-link       # 链接期合同：缺哪个接口，链接器就报哪个符号
 #   make shared           # build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
+#   make wt-tools         # 克隆固定 tag 的真 WT 并编出 wt / wtperf（一次性）
+#   make wt-abi           # 量「真工具要的符号 - 我们导出的」还差哪几个
 #   make cp1 / cp2        # Checkpoint gate（不计分，没过不准进下一段）
 #   make capstone         # C1–C4 结业验收
 #   make asan / tsan      # 独立的 sanitizer 构建目录，不污染 build/
@@ -30,7 +32,7 @@ TYPE       ?= Debug
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 
 .PHONY: all configure build test grade clean probe probe-link shared \
-        cp1 cp2 capstone asan tsan todo check-docs
+        cp1 cp2 capstone asan tsan todo check-docs wt-tools wt-abi
 
 all: test
 
@@ -78,6 +80,16 @@ probe-link: build
 # drop-in 共享库（真 wtperf / wt 用 LD_PRELOAD 顶掉 libwiredtiger.so）
 shared: build
 	@$(CMAKE) --build $(BUILD) --target wiredtiger -j $(JOBS)
+
+# ---------------------------------------------------------------- 真工具链
+# 一次性准备：克隆固定 tag 的 WT + 编出 wt / wtperf（源码在 external/，不进仓库）
+wt-tools:
+	@bash scripts/wt_tools.sh
+
+# 量工具面缺口：真工具要的符号 - 我们 .so 导出的符号。
+# 这是 C1/C2 的进度条，不猜数字，直接 nm 比。
+wt-abi: shared
+	@python3 scripts/wt_abi.py
 
 # ---------------------------------------------------------------- 人工门
 # cp1 = T3.0–T3.2（合同 / config+catalog / 写路径）
