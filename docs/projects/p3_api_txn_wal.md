@@ -182,6 +182,37 @@ new: AAAA[DD]CCCC
 
 `add > maxdiff` 时返回 `WT_NOTFOUND`（调用方会退化成整值 update）。
 
+### `open_cursor` 还要认 `dump=print|hex`（C2 门依赖，不另记分）
+
+`wt dump` 并不自己格式化数据：它 `open_cursor(uri, "dump=print")`，真正把 key/value
+转成文本的是**库里的 dump 游标**（真 WT `src/cursor/cur_dump.c`）。所以 `open_cursor`
+只要把 `dump=` 当未知配置忽略掉，Capstone C2 就一定挂 —— 而且报错会落在 `load` 那一侧
+（"invalid format"），看着像 `load` 的问题。这是本项目最容易走错方向的一处。
+
+格式不是我们定的，是 `wt load` 的读入逻辑卡死的（`src/utilities/util_load.c:253-280`）：
+
+```
+WiredTiger Dump (WiredTiger Version 11.3.0)   # 第 1 行必须以 "WiredTiger Dump " 开头
+Format=print                                   # 第 2 行（-x 时 Format=hex）
+Header                                         # 第 3 行
+table:rt                                       # uri / config 成对出现
+<config>
+Data                                           # 转入数据段
+k1\00                                          # 一行键
+v1\00                                          # 一行值
+```
+
+转义规则（`__wt_raw_to_esc_hex`，`src/support/hex.c:66`）：
+
+| 字节 | 输出 |
+|---|---|
+| 可打印 | 原样 |
+| `\` | `\\` |
+| 其余 | `\` + 两位小写 hex（`\00`、`\ff`） |
+
+`-x` 换 `__wt_raw_to_hex`：每字节两位小写 hex、连写不空格，一条记录仍占两行。
+实测 `k1\0` → `6b3100`。
+
 ---
 
 ## T3.3 游标遍历（7 项）
@@ -408,12 +439,18 @@ $ nm -D --undefined-only $WT_SRC/build/wt | grep __wt | wc -l
 20
 $ nm -D --undefined-only $WT_SRC/build/bench/wtperf/wtperf | grep __wt | wc -l
 18
-# 并集扣掉 4 个重叠 = 34
+# __wt_* 函数并集扣掉 4 个重叠 = 34
+
+$ readelf -rW $WT_SRC/build/wt | grep R_X86_64_COPY | grep __wt
+__wt_optreset  __wt_optwt  __wt_optind  __wt_optarg
+$ readelf -rW $WT_SRC/build/bench/wtperf/wtperf | grep R_X86_64_COPY | grep __wt
+__wt_optreset  __wt_optind  __wt_optarg  __wt_process
+# 数据对象并集 5 个 —— 这些在 nm 里写的是"已定义"，只有 readelf 看得见
 ```
 
-这 34 个不是"顺手加的兼容层"，而是**动态链接器点名要的**：`LD_PRELOAD` 我们的 `.so`
-时少一个就 `undefined symbol` 当场起不来。它们集中在 `src/api/wt_tool_abi.cpp`，
-按性质分四组：
+这 34 个不是"顺手加的兼容层"，而是**动态链接器点名要的**：换成我们的 `.so` 后
+少一个就 `undefined symbol` 当场起不来（数据对象连延迟绑定都没有）。它们集中在
+`src/api/wt_tool_abi.cpp`，按性质分四组：
 
 | 组 | 个数 | 代表 | 实现难点 |
 |---|---|---|---|

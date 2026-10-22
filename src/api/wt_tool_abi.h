@@ -1,19 +1,27 @@
 /*-
- * src/api/wt_tool_abi.h —— 工具面内部 ABI：真 wt / wtperf 会直接来要的 34 个 __wt_*
+ * src/api/wt_tool_abi.h —— 工具面内部 ABI：真 wt / wtperf 会直接来要的 39 个符号
+ *                          （34 个函数 + 5 个数据对象）
  *
  * ★ 为什么需要这个文件（不是"多此一举的兼容层"）：
  *   真 `wt` 和 `wtperf` 不是只调公开 API。它们源码里 include 了 WT 内部头
- *   （wt_internal.h / posix.h），所以**编译出来的二进制**带着一批 __wt_* 的未定义符号：
+ *   （wt_internal.h / posix.h），所以**编译出来的二进制**带着一批 __wt_* 的依赖：
  *
- *       $ nm -D --undefined-only $WT_SRC/build/wt      | grep __wt    → 20 个
- *       $ nm -D --undefined-only $WT_SRC/build/bench/wtperf/wtperf \
- *                                                     | grep __wt    → 18 个
- *       并集（重叠 4 个：copy_and_sync / free_int / getopt / vsnprintf_len_incr）
- *                                                     → 34 个
+ *       $ nm -D --undefined-only $WT/build/wt                   → 20 个函数
+ *       $ nm -D --undefined-only $WT/build/bench/wtperf/wtperf  → 18 个函数
+ *       并集（重叠 4 个）                                        → 34 个函数
+ *       $ readelf -rW <工具> | grep R_X86_64_COPY               → 5 个数据对象
  *
- *   LD_PRELOAD 我们的 .so 时，动态链接器要求这 34 个符号**一个都不能少**，
- *   少一个就是 `undefined symbol` 当场起不来。所以它们是 C2（wt 工具）和
- *   C1（wtperf runner）共同的前置，不是可选项。
+ *   数据对象（__wt_optind 之类）在 nm 里显示为"已定义"，因为链接器做了 COPY
+ *   重定位：在可执行文件的 .bss 里复制一份。只有 readelf -r 才看得出来。
+ *
+ * ★ 怎么让真工具用上我们的库 —— 两条路，结论不同：
+ *   (a) LD_PRELOAD：真库**仍然被加载**（可执行文件里写着 NEEDED
+ *       libwiredtiger.so.11.3.0）。我们没导出的符号会被真库静默兜底，于是
+ *       "跑通了"可能是一半我们的实现 + 一半真 WT —— 假通过（实测 __wt_getopt
+ *       就绑到了真库）。
+ *   (b) 真替换：我们的 .so 与真库**同名同 SONAME**，用 LD_LIBRARY_PATH 顶上，
+ *       真库根本不进场；这时少一个符号就是硬 undefined symbol。
+ *   本项目走 (b)（CMake 的 SOVERSION 对齐 11.3.0，脚本里见 wt_setup_dropin）。
  *
  * ★ 签名从哪来（重要，别凭记忆改）：
  *   全部由 `gcc -E` 在真 WT 的构建配置下导出，即 `HAVE_DIAGNOSTIC=0` 时实际生效的那一版。
@@ -24,7 +32,7 @@
  *   这些函数只在"被真工具调用"时才有意义。我们的单测一条都不会调到它们 ——
  *   验收靠 `make capstone` 的 C2/C1，不靠断言。所以别为了让测试变绿去糊一个返回值。
  *
- * 分组见下：平台胶水 / 缓冲与格式化 / JSON / 内核元数据与日志。
+ * 分组见下：平台胶水 / 缓冲与格式化 / JSON / 内核元数据与日志 / 数据对象。
  * 每一条后面都标了真 WT 里的定义位置，实现时照着看。
  * -*/
 #pragma once
@@ -202,5 +210,42 @@ int __wt_txn_printlog(WT_SESSION *wt_session, const char *ofile, uint32_t flags,
 
 /* 文件拷贝 + fsync（wt 工具的 backup 路径用）。真 WT: src/os_common/filename.c:98 */
 int __wt_copy_and_sync(WT_SESSION *wt_session, const char *from, const char *to);
+
+/* =========================================================================
+ * E. getopt 状态与进程级全局（5 个**数据对象**，不是函数）
+ *
+ * ★ 为什么这里会有变量：`nm -D --undefined-only` 看不见它们。
+ *   `__wt_optind` 这类是"可执行文件直接引用库里的数据"，链接器会用
+ *   R_X86_64_COPY 重定位：在可执行文件的 .bss 里**复制一份**。所以它们在
+ *   `nm -D` 里显示为"已定义"，而只在 `readelf -r` 里露出真实需求：
+ *
+ *       $ readelf -rW $WT/build/wt | grep R_X86_64_COPY
+ *       ... __wt_optreset / __wt_optwt / __wt_optind / __wt_optarg
+ *       $ readelf -rW $WT/build/bench/wtperf/wtperf | grep R_X86_64_COPY
+ *       ... __wt_optreset / __wt_optind / __wt_optarg / __wt_process
+ *
+ * ★ COPY 重定位按 **size** 搬字节：我们定义的对象比真库小，ld.so 就会踩坏
+ *   可执行文件 .bss 里它后面那块内存。尺寸一个字节都不能改。
+ *   真值：__wt_optarg 8 / __wt_optind 4 / __wt_optreset 4 / __wt_optwt 4 /
+ *         __wt_process 128（`readelf -sW libwiredtiger.so.11.3.0` 实测）。
+ * ========================================================================= */
+
+/* getopt 的游标。真 WT: src/os_common/os_getopt.c:71（__wt_optind 初值 1） */
+extern int __wt_optind;
+
+/* 置 1 表示下一次 __wt_getopt 从头开始。真 WT: os_getopt.c:74 */
+extern int __wt_optreset;
+
+/* 1 = 用 WT_* 返回码而不是 '?'。真 WT: os_getopt.c:75 */
+extern int __wt_optwt;
+
+/* 当前选项的参数。真 WT: os_getopt.c:76 */
+extern char *__wt_optarg;
+
+/* 进程级全局。真 WT: WT_PROCESS __wt_process（src/support/global.c:11），
+ * 结构体定义在 src/include/connection.h:18，含 checksum 函数指针、TS 频率比等。
+ * 这里只保证**尺寸与对齐**（COPY 按 128 字节搬）；字段布局不在这里复制 ——
+ * 工具侧用到的字段语义属于 T3.6 的实现内容，零初始化的函数指针一旦被调用就是空指针。 */
+extern unsigned char __wt_process[128];
 
 } /* extern "C" */

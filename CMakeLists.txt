@@ -32,6 +32,12 @@ option(TINYWT_BUILD_TESTS "构建评分用测试可执行" ON)
 option(TINYWT_BUILD_SHARED "构建 drop-in 用的 libwiredtiger.so" ON)
 set(TINYWT_SANITIZE "" CACHE STRING "address / thread / 空（不启用）")
 
+# 我们声明的 ABI 版本。必须等于 third_party/wiredtiger/include/wiredtiger.h 里的
+# WIREDTIGER_VERSION_MAJOR.MINOR.PATCH（check_docs 会核对，改头文件时别忘这里）。
+# 它决定 .so 的 SONAME：真工具写的是 NEEDED [libwiredtiger.so.11.3.0]，
+# SONAME 对不上就只能 LD_PRELOAD 叠加，对上了才能真替换。
+set(TINYWT_ABI_VERSION "11.3.0")
+
 if(TINYWT_SANITIZE)
   message(STATUS "sanitizer: ${TINYWT_SANITIZE}")
   add_compile_options(-fsanitize=${TINYWT_SANITIZE} -fno-omit-frame-pointer -g)
@@ -91,6 +97,14 @@ if(TINYWT_BUILD_SHARED)
       ${TINYWT_API_SOURCES})
   set_target_properties(wiredtiger PROPERTIES
       OUTPUT_NAME wiredtiger
+      # ★ SONAME 必须和真库一模一样（libwiredtiger.so.11.3.0）：
+      #   真工具的可执行文件里写的是 NEEDED [libwiredtiger.so.11.3.0]，
+      #   只有同名同 SONAME 才能靠 LD_LIBRARY_PATH **真正替换**它。
+      #   用 LD_PRELOAD 叠加是不够的：真库还会被一起加载，我们没导出的 __wt_*
+      #   会被真库静默兜底 —— 那种"通过"是假的。
+      #   SOVERSION 写 11.3.0 而不是 11.3：WT 的 SONAME 带 patch 号。
+      VERSION ${TINYWT_ABI_VERSION}
+      SOVERSION ${TINYWT_ABI_VERSION}
       POSITION_INDEPENDENT_CODE ON
       LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
   target_include_directories(wiredtiger

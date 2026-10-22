@@ -243,6 +243,18 @@ for name, cond in [
         (ROOT / "src/api/wt_tool_abi.cpp").read_text(encoding="utf-8"))) == 34),
     ("CMake 编入 wt_tool_abi.cpp", "src/api/wt_tool_abi.cpp" in
         (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")),
+    # 数据对象不在 nm 里（COPY 重定位），但少一个 ld.so 就当场报 undefined symbol。
+    ("工具面 ABI：5 个数据对象", len(re.findall(
+        r"^extern .*__wt_(?:optind|optarg|optreset|optwt|process)",
+        (ROOT / "src/api/wt_tool_abi.h").read_text(encoding="utf-8"), re.M)) == 5),
+    # `$( )` 是子 shell：wt_setup_dropin 设的 WT_ENV 一赋值就随子 shell 消失，
+    # 工具于是照 RUNPATH 找到真库 —— 门全绿，但跑的是真 WT。这种写法必须钉死在 CI 里。
+    # 只看可执行行：注释里正大光明地写着这个反例，不能算违规。
+    ("dropin 不在命令替换里调用", not re.search(
+        r"\$\(\s*wt_setup_dropin", "\n".join(
+            ln for p in (ROOT / "scripts").glob("*.sh")
+            for ln in p.read_text(encoding="utf-8").splitlines()
+            if not ln.lstrip().startswith("#")))),
 ]:
     ok(name) if cond else bad(name)
 

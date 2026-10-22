@@ -23,6 +23,11 @@ bench/results/
 *.wt
 WiredTigerHS*
 *.log
+# 真 wt / wtperf 的 home 目录文件。脚本都会传 -h，但只要有一次忘了，
+# 它们就落在仓库根目录（WiredTiger / .basecfg / .lock / .turtle 都不含 *.wt 后缀，
+# 单靠 *.wt 拦不住）。用前导 / 只锚定仓库根，不误伤 docs 里引用的源码路径。
+/WiredTiger
+/WiredTiger.*
 
 # ---------------------------------------------------------------- 编辑器 / 系统
 .vscode/

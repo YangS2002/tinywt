@@ -1,10 +1,15 @@
 /*-
- * src/api/wt_tool_abi.cpp —— P3/T3.6：工具面内部 ABI 的 34 个 __wt_* 实现
+ * src/api/wt_tool_abi.cpp —— P3/T3.6：工具面内部 ABI 的 34 个函数 + 5 个数据对象
  *
- * 这个文件里的函数**没有一个会被我们的单测调用**。它们的唯一调用方是
+ * 这个文件里的东西**没有一个会被我们的单测调用**。唯一调用方是
  * 真 `wt` / `wtperf` 二进制 —— 也就是 `make capstone` 的 C1/C2。
- * 所以：空实现不会让 `make grade` 变红，但会让 `make capstone` 直接
- * `undefined symbol` 起不来。这是"工具面验收"，不是"单元测试验收"。
+ * 所以：空实现不会让 `make grade` 变红，但会让 `make capstone` 起不来。
+ * 这是"工具面验收"，不是"单元测试验收"。
+ *
+ * 起不来的方式有两种，都见过：
+ *   - 函数缺了 → 加载期 / 调用期报 undefined symbol（真替换模式下）
+ *   - 数据对象尺寸不对 → 链接器按 size 做 COPY，小一字节就踩坏工具的 .bss
+ *
  *
  * 实现顺序建议（按依赖，不是按字母）：
  *   1. A 组的纯平台胶水（abort / errno / sleep / yield / random / thread_*）
@@ -392,5 +397,33 @@ __wt_copy_and_sync(WT_SESSION *wt_session, const char *from, const char *to)
     (void)to;
     UNIMPLEMENTED_RC("P3/T3.6 __wt_copy_and_sync", WT_ERROR);
 }
+
+/* =========================================================================
+ * E. 数据对象（5 个）
+ *
+ * 这几个没有"函数体"可留空 —— 它们的契约是**尺寸**，不是行为。
+ * 初值照抄真 WT：__wt_optind = 1（POSIX getopt 语义），其余为 0。
+ * ========================================================================= */
+
+/* 真 WT: os_getopt.c:71 —— 下标游标，初值 1 不是 0。 */
+int __wt_optind = 1;
+
+/* 真 WT: os_getopt.c:74 */
+int __wt_optreset = 0;
+
+/* 真 WT: os_getopt.c:75 */
+int __wt_optwt = 0;
+
+/* 真 WT: os_getopt.c:76 */
+char *__wt_optarg = nullptr;
+
+/* 真 WT: src/support/global.c:11 / struct __wt_process 在 src/include/connection.h:18。
+ * COPY 重定位按 128 字节整块搬，尺寸必须一模一样。
+ * 注意：这里零初始化，所以 __wt_process.checksum 这类函数指针是 nullptr ——
+ * 工具若走到用它的路径会立刻段错误。这不是"漏了"，是 T3.6 还没实现那部分语义。 */
+alignas(8) unsigned char __wt_process[128] = {0};
+
+/* 尺寸自检：改小一个字节就会踩坏真工具 .bss 的相邻内存。 */
+static_assert(sizeof(__wt_process) == 128, "__wt_process 必须与真库的 sizeof(WT_PROCESS) 一致");
 
 } /* extern "C" */

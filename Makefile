@@ -104,6 +104,14 @@ cp2: build
 capstone: build
 	@bash scripts/capstone.sh
 
+# 自检 C1/C2 的**判据**：把 SHLIB 指向真库跑一遍，应该全绿。
+# 它不验你的实现，验的是"断言有没有写错"—— 判据必须在正确实现上先跑通一次，
+# 否则出现"永远 FAIL 的检查"，你会一直以为是自己代码有问题。
+# 自检模式跳过 C1 的 runner、C3 对照组和 C4 榜单（两边本来就是同一个库）。
+capstone-selftest: build
+	@SELFTEST=1 RUNNERS="" SHLIB=$$PWD/external/wiredtiger/build/libwiredtiger.so \
+	  bash scripts/capstone.sh
+
 # ---------------------------------------------------------------- sanitizer
 # 用独立构建目录：避免「跑完 asan 忘了 make clean」这类坑。
 asan:

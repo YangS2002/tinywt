@@ -32,6 +32,7 @@ make p2-test           # 只跑 P2
 make check-docs        # 文档里的数字/路径/链接是否还和代码一致
 make wt-tools          # 一次性：拉真 WT 源码并编出 wt / wtperf（Capstone 前置）
 make wt-abi            # 量工具面进度：真工具要的符号，我们导出齐了没
+make capstone-selftest # 自检 C1/C2 的判据：换真库跑一遍应该全绿（验判据，不验实现）
 ```
 
 骨架初始状态：

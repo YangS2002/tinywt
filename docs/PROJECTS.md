@@ -366,10 +366,21 @@ wtperf = bench/wtperf/{wtperf,wtperf_config,wtperf_misc,track,wtperf_throttle,
 ### wt 工具
 
 ```
-$ nm -D --undefined-only $WT_SRC/build/wt | grep __wt    → 20 个
+$ nm -D --undefined-only $WT_SRC/build/wt | grep -E '^(__wt_|wiredtiger_)' | wc -l   → 23
+$ readelf -rW $WT_SRC/build/wt | grep R_X86_64_COPY                                  → 4 个数据对象
 ```
 
-20 个，不是 23 个。按性质分四组：
+23 拆成三块：**`__wt_*` 函数 20 个**、**公共 API 3 个**（`wiredtiger_open` /
+`wiredtiger_strerror` / `wiredtiger_version`，都是我们自己导出的）、
+**数据对象 4 个**（`__wt_optind` / `__wt_optarg` / `__wt_optreset` / `__wt_optwt`）。
+`wtperf` 那边是 18 个 `__wt_*` + 4 个公共 API + 4 个数据对象（有 `__wt_process`，
+没有 `__wt_optwt`）。
+
+数据对象在 `nm` 里显示为"已定义" —— 链接器用 `R_X86_64_COPY` 把它们复制进了可执行
+文件的 `.bss`，所以只有 `readelf -r` 看得见。COPY 按 **size** 搬，`__wt_process` 必须
+正好 128 字节（`static_assert` 钉住）。
+
+函数按性质分四组：
 
 | 组 | 个数 | 例子 | 碰存储内核？ |
 |---|---|---|---|
@@ -378,8 +389,8 @@ $ nm -D --undefined-only $WT_SRC/build/wt | grep __wt    → 20 个
 | JSON | 5 | `__wt_json_token` `__wt_json_strncpy` | 否 |
 | 内核元数据与日志 | 5 | `__wt_block_ckpt_decode` `__wt_metadata_get_ckptlist` `__wt_txn_printlog` | **是** |
 
-（20 + 18 − 4 个重叠 = 我们一共要给 **34 个**；另有公开 API `wiredtiger_version`，
-`wt` 启动时用它做版本自检，已随 T3.0 给出。）
+（20 函数 + 18 函数 − 4 重叠 = **34 个函数**；再加两者并集的 **5 个数据对象**
+= **39 个符号**。）
 
 > ★ 之前这一节写的是"23 个工具类，不碰存储内核"—— **错了，别信**。
 > 两个错误：数字是估的；性质也判断错了。`__wt_block_ckpt_decode` 要解 checkpoint 地址
