@@ -44,8 +44,16 @@ JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 all: test
 
 # ---------------------------------------------------------------- 构建
+# 显式钉死编译器：WSL 会把 Windows 的 PATH 追加进来，其中
+# /mnt/c/Users/26600/mingw64/bin 里是 Windows 的 gcc.exe —— 它不认 /home/...
+# 路径，被 CMake 选中后只会报 "is not able to compile a simple test program"。
+# command -v gcc 解析的是 Linux 侧的名字（Windows 那个叫 gcc.exe，不会被它抢走）。
+TWT_CC  := $(shell command -v gcc)
+TWT_CXX := $(shell command -v g++)
+
 configure:
-	@$(CMAKE) -S . -B $(BUILD) -DCMAKE_BUILD_TYPE=$(TYPE) >/dev/null
+	@$(CMAKE) -S . -B $(BUILD) -DCMAKE_BUILD_TYPE=$(TYPE) \
+	  -DCMAKE_C_COMPILER=$(TWT_CC) -DCMAKE_CXX_COMPILER=$(TWT_CXX) >/dev/null
 
 build: configure
 	@$(CMAKE) --build $(BUILD) -j $(JOBS)

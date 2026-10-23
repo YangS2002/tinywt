@@ -16,6 +16,30 @@
 #   third_party/wiredtiger/       真 WiredTiger 头文件（合同来源）
 
 cmake_minimum_required(VERSION 3.16)
+
+# ---------------------------------------------------------------- 编译器守卫
+# 必须放在 project() **之前**：CMake 在 project() 里做编译器探测，
+# 一旦选中 Windows 的 mingw gcc.exe，它不认 /home/... 路径，探测阶段就炸，
+# 而且只报一句 "The C compiler ... is not able to compile a simple test program"，
+# 极难定位。到 project() 之后再检查就晚了。
+#
+# 覆盖两种真实场景：
+#   ① 命令行显式 -DCMAKE_C_COMPILER=/mnt/c/.../gcc.exe
+#   ② 上次 configure 已经把坏编译器写进 CMakeCache.txt（缓存会一直复用，
+#      换机器 / 换 PATH 之后不删缓存就会一直踩）
+#
+# 顺带说明：Linux 上 CMake 只会找名字恰好是 `gcc` 的可执行文件，
+# Windows 那个叫 `gcc.exe`，所以"PATH 里混进 mingw64/bin"本身不会让自动探测选错；
+# Makefile 的 configure 也显式钉死了 gcc/g++（见 Makefile 的 TWT_CC / TWT_CXX）。
+foreach(_comp "$CACHE{CMAKE_C_COMPILER}" "$CACHE{CMAKE_CXX_COMPILER}")
+  if(_comp AND (_comp MATCHES "\\.exe$" OR _comp MATCHES "^/mnt/"))
+    message(FATAL_ERROR
+      "编译器落在 Windows 侧：${_comp}\n"
+      "在 WSL 里必须用 Linux 的 gcc/g++ —— Windows 的 mingw gcc.exe 不认 /home/... 路径。\n"
+      "修法：rm -rf build 后重新 make（Makefile 会钉死 $(command -v gcc) 那两个）。")
+  endif()
+endforeach()
+
 project(tinywt LANGUAGES C CXX)
 
 # ---------------------------------------------------------------- 全局设置
