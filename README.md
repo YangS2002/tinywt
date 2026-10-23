@@ -44,6 +44,9 @@ P0  1/3    P1  0/3    P2  0/13    P3  2/23    P4  0/7    TOTAL 3/49 (6.1%)
 
 那 3 项绿的是**契约自检**（错误码数值、`strerror`），不用写代码，改坏了就会红。
 
+> 开写作业前先看 **[docs/GUIDELINE.md](docs/GUIDELINE.md)** —— 那是「怎么写作业」的规则手册：
+> 能改哪些文件、十条禁止做法、分数怎么算、崩了怎么办、调试附录。机制讲解仍在各 Project 的任务书里。
+
 ---
 
 ## 项目地图
@@ -73,6 +76,7 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2)
 CMakeLists.txt        构建的唯一事实来源
 Makefile              便捷封装（make grade / p2-test / asan …）
 docs/PROJECTS.md      ★ 总任务书
+docs/GUIDELINE.md     ★ 作业指南：规则 / 禁止做法 / 评分 / 调试附录
 docs/projects/        每个 Project 的机制讲解与踩坑
 include/tinywt/       公共头（布局 = ABI 契约，不要改）
   common/defs.h         Status / Slice / Addr / varint / crc32

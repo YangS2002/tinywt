@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""对账：README.md / docs/PROJECTS.md / docs/projects/*.md 里写死的数字、路径、命令，
-与仓库实际情况逐条比对。只做机械核对，不判断语义。
+"""对账：README.md / docs/PROJECTS.md / docs/GUIDELINE.md / docs/projects/*.md 里写死的
+数字、路径、命令，与仓库实际情况逐条比对。只做机械核对，不判断语义。
 """
 
 import re
@@ -11,8 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
 MASTER = ROOT / "docs/PROJECTS.md"
+GUIDE = ROOT / "docs/GUIDELINE.md"
 PROJ_DOCS = {p.stem[:2].upper(): p for p in sorted((ROOT / "docs/projects").glob("*.md"))}
-ALL_DOCS = [README, MASTER, *PROJ_DOCS.values()]
+# 作业指南里也写了 make 目标、可改/不可改的路径，同样要过一遍路径与链接检查。
+ALL_DOCS = [README, MASTER, *([GUIDE] if GUIDE.exists() else []), *PROJ_DOCS.values()]
 
 problems, checked = [], []
 
@@ -213,7 +215,7 @@ mk = (ROOT / "Makefile").read_text(encoding="utf-8")
 targets = set(re.findall(r"^([a-z0-9%-]+):", mk, re.M))
 for need in ("build", "test", "grade", "todo", "probe", "probe-link", "shared",
              "cp1", "cp2", "capstone", "asan", "tsan", "clean", "p%-test",
-             "wt-tools", "wt-abi"):
+             "wt-tools", "wt-abi", "format"):
     ok(f"make {need}") if need in targets else bad(f"Makefile 缺 make {need}")
 
 # ---------------------------------------------------------------- 8. 结构与声明

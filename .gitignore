@@ -34,3 +34,4 @@ WiredTigerHS*
 .idea/
 *.swp
 .DS_Store
+.cache

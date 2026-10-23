@@ -9,6 +9,7 @@
 #   make p2-test          # 只跑某一个 Project
 #   make todo             # 我这部分要写哪些函数？（按 Task 分组，带 file:line）
 #   make check-docs       # 文档里的数字/路径/链接与代码对账（改完文档跑一次）
+#   make format           # 按根目录 .clang-format 格式化 src/ include/ test/
 #   make probe            # 编译期合同：错误码数值 + 结构体布局
 #   make probe-link       # 链接期合同：缺哪个接口，链接器就报哪个符号
 #   make shared           # build/libwiredtiger.so（给真 wtperf / wt 做 drop-in）
@@ -32,7 +33,7 @@ TYPE       ?= Debug
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 
 .PHONY: all configure build test grade clean probe probe-link shared \
-        cp1 cp2 capstone asan tsan todo check-docs wt-tools wt-abi
+        cp1 cp2 capstone asan tsan todo check-docs format wt-tools wt-abi
 
 all: test
 
@@ -125,6 +126,24 @@ tsan:
 	  -DTINYWT_SANITIZE=thread >/dev/null
 	@$(CMAKE) --build $(BUILD_TSAN) -j $(JOBS)
 	@ctest --test-dir $(BUILD_TSAN) --output-on-failure
+
+# ---------------------------------------------------------------- 格式
+# 根目录 .clang-format 是唯一事实来源（Allman / 4 空格 / 100 列）。
+# 没装 clang-format 就**报明确错误**，绝不静默跳过 ——
+# 一个"看着成功其实什么都没做"的格式化步骤，比没有格式化更危险。
+CLANG_FORMAT ?= $(shell command -v clang-format 2>/dev/null || command -v clang-format-14 2>/dev/null)
+FORMAT_DIRS := src include test
+
+format:
+	@if [ -z "$(CLANG_FORMAT)" ]; then \
+	  echo "clang-format 没装 —— 这一步不会静默跳过。"; \
+	  echo "  安装（无需 sudo）：pip install --user clang-format"; \
+	  echo "  然后确认 ~/.local/bin 在 PATH 里：export PATH=\"\$$HOME/.local/bin:\$$PATH\""; \
+	  exit 1; \
+	fi
+	@find $(FORMAT_DIRS) \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0 \
+	  | xargs -0 $(CLANG_FORMAT) -i
+	@echo "格式化完成：$(FORMAT_DIRS)（按 .clang-format）"
 
 # ---------------------------------------------------------------- 导航
 # 「我该写什么」：把所有 UNIMPLEMENTED 按 Task 分组列出来。
