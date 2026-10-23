@@ -118,6 +118,22 @@ if(TINYWT_BUILD_SHARED)
   target_link_libraries(wiredtiger PUBLIC Threads::Threads)
 endif()
 
+# ---------------------------------------------------------------- 作业客户端
+# bench/wt_client.c 只 include 公开的 wiredtiger.h，走和 wtperf 同一套方法表。
+# 链接我们的 .so 只是为了拿到 NEEDED [libwiredtiger.so.11.3.0]；运行时
+# 用 LD_LIBRARY_PATH 换库 —— 同一个二进制既能跑 tinywt 也能跑真 WT。
+#
+# 它不属于评分面（不产生 RESULT 行），是 make bench / diff-wt / crash 的执行体。
+if(TINYWT_BUILD_SHARED)
+  add_executable(wt_client bench/wt_client.c)
+  target_include_directories(wt_client PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/wiredtiger/include)
+  target_link_libraries(wt_client PRIVATE wiredtiger)
+  target_compile_options(wt_client PRIVATE -Wall -Wextra)
+  set_target_properties(wt_client PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
+
 # ---------------------------------------------------------------- ABI 合同
 # 1) abi_probe_obj：编译期合同（_Static_assert 钉死错误码数值、结构体首成员）
 add_library(abi_probe_obj OBJECT test/contract/abi_probe.c)

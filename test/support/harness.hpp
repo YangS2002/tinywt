@@ -29,13 +29,17 @@
 #pragma once
 
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <filesystem>
 #include <string>
 #include <vector>
+
+#include <unistd.h>
 
 #include "tinywt/common/defs.h"
 
@@ -44,6 +48,128 @@
 #endif
 
 namespace fs = std::filesystem;
+
+/* -------------------------------------------------------------------------
+ * 崩溃 / 超时看门狗（wire）
+ *
+ * 为什么需要：harness 的异常防火墙只挡得住 C++ 异常。段错误、assert、
+ * std::terminate、死循环都挡不住 —— 那会让当前项只有 BEGIN 没有 RESULT，
+ * grade.py 只能记 MISS。MISS 是"没测"，但学生看到的是"这一项没结果"，
+ * 分不清是崩溃、超时还是漏写。
+ *
+ * 这里做两件事：
+ *   1. 进程级信号处理器：段错误 / abort / 总线错误 / 非法指令 / 算术异常
+ *      → 立刻补一行 RESULT ... CRASH(...)，错误信息里带当前 CASE 名。
+ *   2. 每项一个 alarm 超时（默认 180s，TWT_CASE_TIMEOUT 可改）
+ *      → 死循环变成 TIMEOUT，而不是把整个二进制挂到 grade.py 的 1800s 上限。
+ *
+ * ★ sanitizer 构建不接管 SIGSEGV/SIGABRT：ASan/TSan 自己的报告比我们这行
+ *   RESULT 有用得多（栈、影子内存、竞争双方）。只保留 SIGALRM。
+ * ------------------------------------------------------------------------- */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define TWT_SANITIZER_BUILD 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define TWT_SANITIZER_BUILD 1
+#endif
+#endif
+#ifndef TWT_SANITIZER_BUILD
+#define TWT_SANITIZER_BUILD 0
+#endif
+
+namespace twt_hx {
+
+/* 当前项的 RESULT 前缀："RESULT P2\t<case>\t"。信号处理器只做 write()。 */
+inline char g_prefix[512] = {0};
+inline size_t g_prefix_len = 0;
+
+inline void
+set_prefix(const char *proj, const char *name)
+{
+    int n = std::snprintf(g_prefix, sizeof(g_prefix), "RESULT %s\t%s\t", proj, name);
+    g_prefix_len = (n > 0 && (size_t)n < sizeof(g_prefix)) ? (size_t)n : 0;
+}
+
+inline void
+wire(const char *s)
+{
+    if (s != nullptr && *s != '\0')
+        (void)!::write(STDOUT_FILENO, s, std::strlen(s));
+}
+
+/* async-signal-safe：只用 write / strlen / _exit */
+inline void
+fatal(int sig)
+{
+    const char *status = "ERROR";
+    switch (sig) {
+    case SIGALRM:
+        status = "TIMEOUT";
+        break;
+    case SIGSEGV:
+        status = "CRASH(SEGV)";
+        break;
+    case SIGABRT:
+        status = "CRASH(ABRT)";
+        break;
+    case SIGBUS:
+        status = "CRASH(BUS)";
+        break;
+    case SIGFPE:
+        status = "CRASH(FPE)";
+        break;
+    case SIGILL:
+        status = "CRASH(ILL)";
+        break;
+    default:
+        break;
+    }
+    if (g_prefix_len)
+        (void)!::write(STDOUT_FILENO, g_prefix, g_prefix_len);
+    wire(status);
+    wire("\t0\t1\t0\n");
+    _exit(128 + sig);
+}
+
+inline void
+install()
+{
+    struct sigaction sa {};
+    std::memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = fatal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_NODEFER;
+
+    (void)sigaction(SIGALRM, &sa, nullptr);
+
+#if !TWT_SANITIZER_BUILD
+    (void)sigaction(SIGSEGV, &sa, nullptr);
+    (void)sigaction(SIGABRT, &sa, nullptr);
+    (void)sigaction(SIGBUS, &sa, nullptr);
+    (void)sigaction(SIGFPE, &sa, nullptr);
+    (void)sigaction(SIGILL, &sa, nullptr);
+#endif
+}
+
+struct Installer {
+    Installer() { install(); }
+};
+inline const Installer g_installer {};
+
+/* 每项超时秒数：TWT_CASE_TIMEOUT=<秒>，0 = 关掉 */
+inline int
+case_timeout()
+{
+    static const int secs = []() {
+        const char *e = std::getenv("TWT_CASE_TIMEOUT");
+        int v = (e != nullptr && *e != '\0') ? std::atoi(e) : 180;
+        return v > 0 ? v : 0;
+    }();
+    return secs;
+}
+
+} /* namespace twt_hx */
+
 
 /* 当前测试项的计数器（测试代码直接用这三个名字） */
 inline int g_pass = 0;
@@ -84,6 +210,7 @@ results()
     do {                                                                                          \
         case_name_store() = (name);                                                               \
         g_case = case_name_store().c_str();                                                       \
+        twt_hx::set_prefix(TWT_PROJECT, g_case); /* 崩了也能报出是哪个 CASE */                    \
         printf("\n=== %s ===\n", g_case);                                                         \
     } while (0)
 
@@ -136,7 +263,13 @@ run_case(const char *fallback_name, Fn fn)
     g_fail = 0;
     case_name_store() = fallback_name;
     g_case = case_name_store().c_str();
+    twt_hx::set_prefix(TWT_PROJECT, g_case);
     twt::notimpl_hit() = false;
+
+    /* 每项一个闹钟：死循环 / 死等锁 → TIMEOUT，而不是整份结果作废 */
+    const int tmo = twt_hx::case_timeout();
+    if (tmo > 0)
+        (void)alarm((unsigned)tmo);
 
     auto t0 = std::chrono::steady_clock::now();
     const char *status = "PASS";
@@ -163,6 +296,8 @@ run_case(const char *fallback_name, Fn fn)
         status = "ERROR";
         note = "unknown exception";
     }
+
+    (void)alarm(0); /* 拆掉闹钟：后面的打印/汇总不能再被它打断 */
 
     /* C ABI 层不能抛异常，靠这个标记report */
     if (status[0] == 'P' && twt::notimpl_hit())
@@ -203,6 +338,16 @@ run_case(const char *fallback_name, Fn fn)
 }
 
 #define RUN(fn) run_case(#fn, fn)
+
+/*
+ * RUN_NAMED(name, fn) —— 给一项起一个**稳定**的名字。
+ *
+ * 为什么需要：RUN 用函数名当 fallback，而 CASE() 里的名字才是给人看的。
+ * 如果一个函数内部调 CASE() 多次（比如多组种子），那么崩溃时打出来的是
+ * 崩溃那一刻的名字，跑通时打的是最后一个 —— 同一个评分项的名字会变。
+ * 想让一项始终叫同一个名字，用 RUN_NAMED。
+ */
+#define RUN_NAMED(name, fn) run_case(name, fn)
 
 /* 每个测试二进制自己的收尾：打印汇总 + 机器可读行，返回 0/1 */
 inline int

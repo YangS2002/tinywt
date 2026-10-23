@@ -29,23 +29,39 @@ using u64 = std::uint64_t;
 /* -------------------------------------------------------------------------
  * 状态码（对标 src/include/error.h）
  *
- * ★ 契约：数值必须与真 WT 的 dist/api_err.py 完全一致。
+ * ★ 契约：**对外**的六个值必须与真 WT 的 dist/api_err.py 完全一致。
  *   这不是随便定的 —— 真 wtperf / wt 工具会把返回值直接和 WT_NOTFOUND 比较，
  *   差一个数就会把「键不存在」误判成「需要回滚」。
  *   test/contract/abi_probe.c 里有 _Static_assert 钉死这组值。
+ *
+ * ★ 真 WT 的错误码表（dist/api_err.py，注释写明 "These numbers cannot change
+ *   without breaking backward compatibility"）一共 9 个，不是 6 个：
+ *
+ *     WT_ROLLBACK          -31800     WT_RUN_RECOVERY      -31806
+ *     WT_DUPLICATE_KEY     -31801     WT_CACHE_FULL        -31807
+ *     WT_ERROR             -31802     WT_PREPARE_CONFLICT  -31808
+ *     WT_NOTFOUND          -31803     WT_TRY_SALVAGE       -31809
+ *     WT_PANIC             -31804
+ *     WT_RESTART           -31805
+ *
+ * ★ 上一版把 tinywt 私有的三个状态定在 -31806/-31807/-31808，那三个值在真 WT
+ *   里分别是 WT_RUN_RECOVERY / WT_CACHE_FULL / WT_PREPARE_CONFLICT —— 「私有」
+ *   其实是**撞号**：学生返回 S_IO，C ABI 原样透出去，wtperf 会当成
+ *   WT_CACHE_FULL 去重试。私有状态必须落在 WT 的号段之外（这里取 -319xx），
+ *   而且只能经 src/api/connection.cpp 的 twt_wt_rc() 映射成上面的公开值。
  * ------------------------------------------------------------------------- */
 enum Status : int {
     S_OK = 0,
-    S_ROLLBACK = -31800,  /* 对标 WT_ROLLBACK        */
-    S_DUPLICATE = -31801, /* 对标 WT_DUPLICATE_KEY   */
-    S_ERROR = -31802,     /* 对标 WT_ERROR           */
-    S_NOTFOUND = -31803,  /* 对标 WT_NOTFOUND        */
-    S_PANIC = -31804,     /* 对标 WT_PANIC           */
-    S_RESTART = -31805,   /* 对标 WT_RESTART         */
-    /* 以下三个是 tinywt 自己的，不属于 WT 契约 */
-    S_NOTSUP = -31806,  /* 该功能未实现（作业骨架用） */
-    S_IO = -31807,      /* 系统调用失败 */
-    S_CORRUPT = -31808, /* 校验和不匹配 / 磁盘镜像损坏 */
+    S_ROLLBACK = -31800,  /* WT_ROLLBACK          */
+    S_DUPLICATE = -31801, /* WT_DUPLICATE_KEY     */
+    S_ERROR = -31802,     /* WT_ERROR             */
+    S_NOTFOUND = -31803,  /* WT_NOTFOUND          */
+    S_PANIC = -31804,     /* WT_PANIC             */
+    S_RESTART = -31805,   /* WT_RESTART           */
+    /* ---- 以下三个是 tinywt 私有状态，不在 WT 号段内（-319xx） ---- */
+    S_NOTSUP = -31900,  /* 该功能未实现（作业骨架用） */
+    S_IO = -31901,      /* 系统调用失败 */
+    S_CORRUPT = -31902, /* 校验和不匹配 / 磁盘镜像损坏 */
 };
 
 inline const char *

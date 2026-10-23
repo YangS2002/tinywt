@@ -156,8 +156,12 @@ C1 / C3 / `checkpoint.sh` 三处共用。改判断之前先跑 `make capstone-se
 ## C2 —— wt 工具子集
 
 ```
-wt list / create / verify / stat / drop / dump -x / load
+wt list / create / drop / dump -x / load
 ```
+
+> `wt verify` / `wt stat` **不在默认判据里**：前者要 `WT_SESSION::verify`，后者要
+> `statistics:` 游标，两者都没有对应的 Task（statistics 属可选池 O6）。想自测用
+> `C2_OPTIONAL=1 make capstone` —— 它会跑，但不把缺实现记成 capstone FAIL。
 
 真 `wt` 要 **27 个符号**，拆开看是三块：
 
@@ -190,8 +194,6 @@ wt list / create / verify / stat / drop / dump -x / load
 |---|---|
 | `create table:t` | 不打印 usage 段 |
 | `list` | 输出里**有** `table:t`（写进去了的唯一证据） |
-| `verify table:t` | 不打印 usage 段 |
-| `stat table:t` | 有 `名称: 数值` 形式的统计行（空输出 = 命令被吞了） |
 | `drop table:t` | 不打印 usage 段 |
 | `list` | 输出里**没有** `table:t`（drop 不是空操作） |
 | `create -c key_format=S,value_format=S table:rt` + `write` ×3 | 不打印 usage 段 |

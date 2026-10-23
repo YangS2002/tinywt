@@ -37,12 +37,28 @@
 
 namespace twt {
 
-/* 与 WT_BLOCK_HEADER 对齐：disk_size + checksum */
+/*
+ * 与 WT_BLOCK_HEADER 逐字节对齐（src/include/block.h:379-407）：
+ *   disk_size 00-03 / checksum 04-07 / flags 08 / unused 09-11
+ * ★ WT_BLOCK_HEADER_SIZE 是 **12**，不是 8 —— 上一版漏了 flags 和 3 字节填充。
+ *   flags 的 WT_BLOCK_DATA_CKSUM(0x1) 决定 checksum 是否覆盖 block data；
+ *   本版恒为 1（总是覆盖），但字段要留着，否则和真 WT 的块布局差 4 字节。
+ */
 struct BlockHeader {
-    u32 disk_size;
-    u32 checksum;
+    u32 disk_size;    /* 00-03: 落盘页大小（对齐后的总长，含本头） */
+    u32 checksum;     /* 04-07: 页校验和（与 addr cookie 里那份互为佐证） */
+    u8 flags;         /* 08   : WT_BLOCK_DATA_CKSUM */
+    u8 unused[3];     /* 09-11: 填充，保证 32 位对齐 */
 };
-constexpr size_t BLOCK_HEADER_SIZE = 8;
+
+constexpr size_t BLOCK_HEADER_SIZE = 12;
+constexpr u8 BLOCK_DATA_CKSUM = 0x01; /* flags 位：校验和覆盖 block data */
+
+/* 偏移同样是落盘格式；sizeof(BlockHeader) 正好 12（无尾部填充） */
+static_assert(offsetof(BlockHeader, disk_size) == 0, "BlockHeader.disk_size 偏移变了");
+static_assert(offsetof(BlockHeader, checksum) == 4, "BlockHeader.checksum 偏移变了");
+static_assert(offsetof(BlockHeader, flags) == 8, "BlockHeader.flags 偏移变了");
+static_assert(sizeof(BlockHeader) == BLOCK_HEADER_SIZE, "BlockHeader 有意外填充");
 
 /* 空闲区间（对标 WT_EXT：{off, size, depth, next[]} 双跳表节点） */
 struct Extent {

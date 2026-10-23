@@ -43,7 +43,15 @@ PROJECT_TITLE = {
 
 STATUS_MARK = {"PASS": "\033[32m PASS \033[0m", "FAIL": "\033[31m FAIL \033[0m",
                "NOTIMPL": "\033[33m TODO \033[0m", "ERROR": "\033[35m ERR  \033[0m",
-               "MISS": "\033[35m MISS \033[0m"}
+               "MISS": "\033[35m MISS \033[0m",
+               "TIMEOUT": "\033[35m TMO  \033[0m"}
+
+
+def status_mark(status):
+    """CRASH(SEGV) 这类带后缀的状态也要有颜色，别原样裸奔。"""
+    if status.startswith("CRASH"):
+        return "\033[31m CRASH \033[0m"
+    return STATUS_MARK.get(status, status)
 
 
 def expected_items():
@@ -126,7 +134,7 @@ def main(argv):
         if last_proj is not None and proj != last_proj:
             print("-" * 92)
         last_proj = proj
-        mark = STATUS_MARK.get(status, status)
+        mark = status_mark(status)
         print(f"{proj:<5}{mark}{npass:>6}{nfail:>6}  {name}")
     print("=" * 92)
 

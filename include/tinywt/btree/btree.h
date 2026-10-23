@@ -159,7 +159,8 @@ public:
      *
      * 契约（T4.2 要求真的维护这个状态机，测试按它断言）：
      *   open() 只根据超级块建立 root_ref_（page == nullptr, state == REF_DISK），
-     *           **不**读页；第一次 descend 才 page_in → READING → MEM。
+     *           **不**读页；第一次 descend 才 page_in：
+     *           DISK --CAS--> REF_LOCKED(reading=true) --读完--> REF_MEM。
      *   eviction 抢到页时 MEM → LOCKED，淘汰完成后回到 DISK。
      *
      * 与真 WT 的差别：真 WT 的 WT_REF 在父页里，这里根 Ref 是 Btree 的成员，

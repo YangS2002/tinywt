@@ -11,7 +11,7 @@
  * 对标真 WT：
  *   src/include/hazard.h        WT_HAZARD_POINTER / WT_HAZARD（16 槽）
  *   src/support/hazard.c        __wt_hazard_set / __wt_hazard_clear
- *   src/include/btmem.h         WT_REF 状态机 DISK→READING→MEM→LOCKED
+ *   src/include/btmem.h         WT_REF 状态机 DISK→LOCKED(reading)→MEM，淘汰 MEM→LOCKED→DISK
  *
  * 评分点（每项一个测试函数）：
  *   1. 并发 L1（4 线程对拍 std::map，×2 种子）
@@ -247,7 +247,7 @@ test_ref_state_and_hazard()
         CHECK_ST(bt.open(path, cfg_for(8, 8)));
         /*
          * 契约：open 只从超级块建立 Ref，不读页。
-         * 第一次 descend 才 DISK → READING → MEM。
+         * 第一次 descend 才 DISK → LOCKED(reading=true) → MEM。
          */
         CHECK(bt.root_ref_state() == REF_DISK);
 

@@ -33,6 +33,10 @@ make check-docs        # 文档里的数字/路径/链接是否还和代码一�
 make wt-tools          # 一次性：拉真 WT 源码并编出 wt / wtperf（Capstone 前置）
 make wt-abi            # 量工具面进度：真工具要的符号，我们导出齐了没
 make capstone-selftest # 自检 C1/C2 的判据：换真库跑一遍应该全绿（验判据，不验实现）
+make bench             # 自己的性能曲线（Release；REAL=1 与真 WT 同场对比）
+make diff-wt           # 行为对拍：同一确定性操作流，两个引擎 dump 必须逐字节相同
+make crash             # 崩溃一致性：SIGKILL 后重开，已 checkpoint 的前缀不能丢
+make doctor            # 环境体检：工具链 / 真 WT / 构建产物 / 磁盘
 ```
 
 骨架初始状态：

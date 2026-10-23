@@ -219,6 +219,22 @@ BusTub 有编译期 `_Static_assert`、`make check-tests`、Gradescope 三层。
 **层 5 是人为设置的**，理由：P3 写歪了不会立刻扣分，但会让后面 P4 的所有红色结果
 伪装成"看起来像 P4 的问题"。先过门，再往下走。
 
+### 10.1 三个观测工具（不进 49 项，但决定你走得动走不动）
+
+评分器只回答"对不对"，不回答"多快""和真 WT 一样吗""崩了还对不对"。这三个命令补上这三问：
+
+| 命令 | 回答什么 | 依赖 | 判据 |
+|---|---|---|---|
+| `make bench` | 现在多快、改完是快了还是慢了 | P2 + T3.1/T3.2 | Release 构建下每组 3 次取中位数；`REAL=1` 与真 WT 同场对比 |
+| `make diff-wt` | 行为和真 WT 一致吗 | P3/T3.2 | 同一确定性操作流，两库的 `dump` **逐字节**相同 |
+| `make crash` | 崩溃后数据还对吗 | P3/T3.4–T3.5 | SIGKILL 后重开：无空洞、已 checkpoint 的前缀不丢 |
+
+三个都用 `bench/wt_client.c` 驱动 —— 它只走公开 C ABI，和真 `wtperf` 同一套方法表。
+
+> **判据自检**（和 `capstone-selftest` 同一个道理）：`make crash` 的判定必须先用真 WT
+> 跑通一次 —— `REAL=1 make crash`。如果真库都过不了，说明判据写错了，不是你的实现错了。
+> 这一步只需做一次。
+
 ---
 
 ## 11. 评分怎么算（以及它为什么不骗你）
@@ -271,6 +287,21 @@ make capstone-selftest                                 # 把 SHLIB 指向真库�
 同一机器同构建同 `icount` 才能横比；每组跑 3 次取**中位数**（不是最好那次）；
 表里必须写清 `cache_size` / 线程数 / 压缩器 / git commit。
 
+`make bench` 已经按这三条跑完，并把每组的原始值写进 `bench/results/bench-<时间>.json`
+（Release 构建，不污染 `build/`）。**把结论抄进这张表，别只贴 JSON** —— 表格是给自己
+三周后看的，JSON 是给脚本看的。
+
+> ★ **C3 对照必须用 Release 库。** `build/` 是 Debug(-O0)，真 WT 是 Release；拿 -O0 的库
+> 去比吞吐，量到的是编译选项的差距，不是实现的差距：
+>
+> ```bash
+> make perf-shared
+> SHLIB=$PWD/build-perf/libwiredtiger.so make capstone
+> ```
+>
+> 这样 C1/C3 用的都是优化过的库（C4 不会写榜，因为 SHLIB 不是 `build/` 的产物 —— 这是
+> 刻意防止「优化版成绩」混进默认榜）。
+
 ---
 
 ## 附录 A —— 崩了怎么办（三步）
@@ -301,6 +332,10 @@ ulimit -c unlimited
 
 tinywt 自带一整套真 WT 源码（`external/wiredtiger/`）和编出来的真 `wt` / `wtperf`。
 **调试的最高手段是：同一份数据，两个引擎跑一遍，diff 结果。**
+
+**先跑自动化版本**：`make diff-wt`（P3/T3.2 之后可用）。它用同一份确定性操作流分别驱动
+两个库，再逐字节比 `dump`。下面这套手工步骤仍然有用 —— 自动化对拍报"不一致"时，
+用它把差异缩小到具体的键。
 
 ```bash
 # 真库写一个库

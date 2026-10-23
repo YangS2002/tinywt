@@ -98,9 +98,16 @@ test_split_and_many()
 
 /* ---------------------------------------------------------------- 评分器：对拍 std::map */
 static void
-diff_run(unsigned seed, size_t cached, const std::string &tag)
+diff_run(unsigned seed, size_t cached, const char *tag)
 {
-    CASE(tag.c_str());
+    /*
+     * ★ 这里**不**调 CASE()：一项 = 一个评分项，名字必须在整个函数里保持不变。
+     *   以前每组种子都 CASE 一次，于是跑通时 RESULT 永远是最后一组的名字、
+     *   崩溃时是崩的那一组的名字 —— 同一个评分项每次名字都不一样。
+     *   组名只做进度提示（--- 行）。
+     */
+    printf("\n--- P2/T2.3 对拍 std::map：%s\n", tag);
+
     std::string p = dbpath("p2_diff.wt");
     rmpath(p);
 
@@ -186,11 +193,12 @@ diff_run(unsigned seed, size_t cached, const std::string &tag)
 static void
 test_diff_against_stdmap()
 {
+    CASE("P2/T2.3 分裂 + 对拍 std::map（4 组种子 × cache 压力）");
     /* 多组种子 × 两种 cache 压力（40 页会疯狂淘汰，1000 页基本不淘汰） */
-    diff_run(20261020, 40, "P2/T2.3 分裂 + 对拍 std::map #1 (cache=40)");
-    diff_run(1, 40, "P2/T2.3 分裂 + 对拍 std::map #2 (cache=40)");
-    diff_run(2, 1000, "P2/T2.3 分裂 + 对拍 std::map #3 (cache=1000)");
-    diff_run(3, 1000, "P2/T2.3 分裂 + 对拍 std::map #4 (cache=1000)");
+    diff_run(20261020, 40, "#1 cache=40 seed=20261020");
+    diff_run(1, 40, "#2 cache=40 seed=1");
+    diff_run(2, 1000, "#3 cache=1000 seed=2");
+    diff_run(3, 1000, "#4 cache=1000 seed=3");
 }
 
 /* ---------------------------------------------------------------- T2.5 */

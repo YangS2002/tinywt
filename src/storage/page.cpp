@@ -26,7 +26,8 @@ namespace twt {
 /* -------------------------------------------------------------------------
  * insert 跳表
  *
- * 结构：page->ins_head[level] 是第 level 层的表头；每个 Insert 有 next[0..3]。
+ * 结构：page->ins_head[level] 是第 level 层的表头；每个 Insert 有
+ *       next[0 .. SKIP_MAXDEPTH-1]（固定 10 层，见 WT_SKIP_MAXDEPTH）。
  * 约定：level 0 一定包含所有节点（链表），越高层越稀疏。
  * ------------------------------------------------------------------------- */
 
@@ -67,7 +68,7 @@ ins_find(Page *page, Slice target)
  *   - 每层指针都要维护正确，否则 ins_search 会漏节点。
  *
  * 随机层高的实现自己写（xorshift 之类都行），只要保证 0 层必选、
- * 层高不超过 SKIP_MAXLEVEL 即可。
+ * 层高不超过 SKIP_MAXDEPTH 即可。
  *
  * 真 WT: __wt_row_insert() / __wt_update_append()
  */

@@ -1,0 +1,40 @@
+# tinywt CI —— 只做「不依赖真 WT 源码树」的那几层。
+#
+# 定位：这是学生自己的仓库，CI 的价值是**红不留夜**（GUIDELINE §7）：
+#   - 改了 include/ 里的布局/常量 → make probe 当场红
+#   - 文档数字/路径漂移        → make check-docs 红
+#   - 测试崩溃/超时            → make grade 红（BEGIN 有、RESULT 没有）
+#
+# capstone / diff-wt / crash REAL=1 需要克隆并编译真 WT（几分钟 + 几百 MB），
+# 不放在 CI 里；那些在本地按需跑。
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-grade:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential python3
+
+      - name: 配置 + 编译
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build -j"$(nproc)"
+
+      - name: 编译期合同（错误码 / 结构体布局）
+        run: make probe
+
+      - name: 文档与仓库对账
+        run: make check-docs
+
+      - name: 逐项打分
+        # 骨架阶段大量 NOTIMPL 是正常的：grade.py 只在「缺项/崩溃/超时」时非零退出。
+        run: make grade

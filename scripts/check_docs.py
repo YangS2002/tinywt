@@ -269,6 +269,68 @@ for name, cond in [
 ]:
     ok(name) if cond else bad(name)
 
+# ---------------------------------------------------------------- 9. 与真 WT 源码对账
+# 只在 external/wiredtiger 存在时跑（它被 gitignore，CI 里没有）。
+# 目的：scaffold 里凡是写着"对标 WT"的常量/枚举，数字必须真的相等 ——
+# 注释里说"对标"、值却差一个，是这个项目最隐蔽的坑（学习者会照着错的值去读 WT 源码）。
+wt = ROOT / "external/wiredtiger"
+if not wt.exists():
+    ok("没有 external/wiredtiger，跳过「与真 WT 源码对账」（make wt-tools 之后可查）")
+else:
+    def grab(text, pattern):
+        m = re.search(pattern, text)
+        return int(m.group(1)) if m else None
+
+    defs_h = (ROOT / "include/tinywt/common/defs.h").read_text(encoding="utf-8")
+    err_py = (wt / "dist/api_err.py").read_text(encoding="utf-8", errors="replace")
+    wt_err = {m[0]: int(m[1]) for m in re.findall(r"Error\('(WT_\w+)',\s*(-\d+)", err_py)}
+    ours_err = {m[0]: int(m[1]) for m in re.findall(r"(S_\w+)\s*=\s*(-\d+)", defs_h)}
+
+    for ours, theirs in [("S_ROLLBACK", "WT_ROLLBACK"), ("S_DUPLICATE", "WT_DUPLICATE_KEY"),
+                         ("S_ERROR", "WT_ERROR"), ("S_NOTFOUND", "WT_NOTFOUND"),
+                         ("S_PANIC", "WT_PANIC"), ("S_RESTART", "WT_RESTART")]:
+        got, want = ours_err.get(ours), wt_err.get(theirs)
+        (ok if got == want else bad)(
+            f"错误码 {ours}={got} 与真 WT {theirs}={want} 一致")
+
+    # 私有状态不能占用 WT 的号段：撞号会让 C ABI 把 S_IO 透成 WT_CACHE_FULL
+    collide = sorted(f"{k}={v}" for k, v in ours_err.items()
+                     if k in ("S_NOTSUP", "S_IO", "S_CORRUPT") and v in wt_err.values())
+    (bad if collide else ok)(
+        f"私有状态码 {collide} 撞了真 WT 的号段" if collide
+        else "私有状态码不在 WT 号段内（-319xx）")
+
+    btmem = (wt / "src/include/btmem.h").read_text(encoding="utf-8", errors="replace")
+    wblock = (wt / "src/include/block.h").read_text(encoding="utf-8", errors="replace")
+    misc = (wt / "src/include/misc.h").read_text(encoding="utf-8", errors="replace")
+    block_h = (ROOT / "include/tinywt/storage/block.h").read_text(encoding="utf-8")
+
+    for label, ours_txt, ours_pat, wt_txt, wt_pat in [
+        ("PAGE_HEADER_SIZE", page, r"PAGE_HEADER_SIZE = (\d+)",
+         btmem, r"#define WT_PAGE_HEADER_SIZE (\d+)"),
+        ("BLOCK_HEADER_SIZE", block_h, r"BLOCK_HEADER_SIZE = (\d+)",
+         wblock, r"#define WT_BLOCK_HEADER_SIZE (\d+)"),
+        ("SKIP_MAXDEPTH", page, r"SKIP_MAXDEPTH = (\d+)",
+         misc, r"#define WT_SKIP_MAXDEPTH (\d+)"),
+    ]:
+        got, want = grab(ours_txt, ours_pat), grab(wt_txt, wt_pat)
+        (ok if got == want and got is not None else bad)(
+            f"{label}: tinywt={got} / 真 WT={want}")
+
+    # RefState 的五个值与名字都要对齐（上一版把 READING 当状态，WT 里它是 flag）
+    for name in ("DISK", "DELETED", "LOCKED", "MEM", "SPLIT"):
+        got = grab(page, rf"REF_{name} = (\d+)")
+        want = grab(btmem, rf"#define WT_REF_{name} (\d+)")
+        (ok if got == want and got is not None else bad)(
+            f"RefState REF_{name}={got} / WT_REF_{name}={want}")
+
+    # 页类型写在磁盘上，值必须一致（上一版 ROW_INT/ROW_LEAF 写成了 1/2）
+    for name in ("INVALID", "ROW_INT", "ROW_LEAF"):
+        got = grab(page, rf"PAGE_{name} = (\d+)")
+        want = grab(btmem, rf"#define WT_PAGE_{name} (\d+)")
+        (ok if got == want and got is not None else bad)(
+            f"PageType PAGE_{name}={got} / WT_PAGE_{name}={want}")
+
 # ---------------------------------------------------------------- 输出
 print("=" * 78)
 for tag, m in checked:

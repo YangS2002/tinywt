@@ -248,19 +248,22 @@ else
             fail=$((fail + 1))
         fi
 
-        step "verify table:t" verify table:t
-
-        # stat 必须打出非空的统计行；空输出说明命令被当成 usage 吞了
-        if out=$(wt_out stat table:t); then
-            if printf '%s\n' "$out" | grep -qE '^[^ ]+:[ ]'; then
+        # ★ verify / stat 默认**不判**：它们要的能力不在 49 项作业范围内。
+        #   - `wt verify` 调 WT_SESSION::verify —— 没有任何 Task 要求实现这个方法；
+        #   - `wt stat` 要 statistics: 游标 —— 那是可选池 O6，明确说了不是作业。
+        #   把它们设成硬 FAIL，等于让学生做完 49 项之后撞一个没布置过的作业，
+        #   而且失败信息看起来像"工具面 ABI 没做对"，其实是范围没划进来。
+        #   想自测的人：C2_OPTIONAL=1 make capstone。
+        if [ "${C2_OPTIONAL:-0}" = 1 ]; then
+            step "verify table:t" verify table:t || true
+            if out=$(wt_out stat table:t) &&
+                printf '%s\n' "$out" | grep -qE '^[^ ]+:[ ]'; then
                 say "  ok    wt stat table:t（有统计输出）"
             else
-                say "  FAIL  wt stat table:t 没有统计输出"
-                fail=$((fail + 1))
+                say "  skip  wt stat table:t（statistics 游标未实现，属可选池 O6）"
             fi
         else
-            say "  FAIL  wt stat table:t"
-            fail=$((fail + 1))
+            say "  —   跳过 verify/stat：不在 49 项内（C2_OPTIONAL=1 可自测）"
         fi
 
         step "drop table:t" drop table:t
@@ -389,6 +392,13 @@ elif [ ! -x "$WTPERF" ] || [ ! -f "$SHLIB" ]; then
     say "  SKIP  缺 wtperf 或 libwiredtiger.so"
     skip=$((skip + 1))
 else
+    # ★ 性能对比必须用 Release 库。build/ 默认是 Debug(-O0)，真 WT 是 Release；
+    #   拿 -O0 比吞吐，量到的是编译选项的差距。这里只提醒，不阻断 C3（正确性验证
+    #   用 Debug 反而更好：有断言、ASan 友好），但榜（C4）只收 Release。
+    if [ "${SHLIB}" = "$PWD/build/libwiredtiger.so" ]; then
+        say "  提示：当前 SHLIB 是 build/（通常为 Debug）。要比吞吐："
+        say "        make perf-shared && SHLIB=\$PWD/build-perf/libwiredtiger.so make capstone"
+    fi
     printf '  %-22s %12s %12s %8s\n' runner "real-WT" "tinywt" "ratio"
     for r in ${C3_RUNNERS:-50r50u evict-btree}; do
         a=$(run_wtperf "$r" wt no)
@@ -406,12 +416,28 @@ fi
 # ---------------------------------------------------------------- C4
 say
 say "[C4] 汇总到 docs/LEADERBOARD.md"
+# 榜只收「本项目构建目录 + Release」的数字，两条缺一不可：
+#   - 别的目录（external/wiredtiger/build）是真库 → 写进去是把真 WT 记成 tinywt；
+#   - Debug(-O0) 的 ops/s 不能和真 WT、也不能和别的提交横比。
+SHLIB_ABS=$(readlink -f "$SHLIB" 2>/dev/null || printf '%s' "$SHLIB")
+SHLIB_DIR=$(dirname "$SHLIB_ABS")
+case "$SHLIB_DIR" in
+"$PWD"/build | "$PWD"/build-*) SHLIB_LOCAL=1 ;;
+*) SHLIB_LOCAL=0 ;;
+esac
+BT=$(sed -n 's/^CMAKE_BUILD_TYPE:STRING=//p' "$SHLIB_DIR/CMakeCache.txt" 2>/dev/null | head -1)
+
 if [ "${SELFTEST:-0}" = 1 ]; then
     say "  —   自检模式：不写榜单（这一轮的\"tinywt\"数字其实是真库的）"
-elif [ "$SHLIB" != "$PWD/build/libwiredtiger.so" ]; then
-    # 校准跑（SHLIB 指着真库）出来的数字也是真 WT 的，写进榜就是假数据。
-    # 榜单只收"本项目构建产物"跑出来的数。
-    say "  —   SHLIB 不是本项目产物（$SHLIB），不写榜单"
+elif [ "$SHLIB_LOCAL" != "1" ]; then
+    say "  —   SHLIB 不是本项目构建目录下的产物（$SHLIB），不写榜单"
+    skip=$((skip + 1))
+elif [ "$BT" != "Release" ]; then
+    # ★ 以前这里只看「SHLIB 是不是 build/ 的产物」，于是正好反了：
+    #   Debug 的 build/ 会写榜，Release 的 build-perf/ 反而不写。
+    say "  —   构建类型：${BT:-未知} —— 榜只收 Release（Debug 的数字不可横比）"
+    say "      先 make perf-shared，再 SHLIB=\$PWD/build-perf/libwiredtiger.so make capstone"
+    skip=$((skip + 1))
 elif ls "$RESULT_DIR"/*.tinywt.log >/dev/null 2>&1; then
     ROWS=$(mktemp)
     for r in $RUNNERS; do

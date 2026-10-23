@@ -16,7 +16,7 @@
  *   ...
  *
  * 每个数据块：
- *   [BlockHeader{disk_size, checksum}] [镜像 size 字节] [补 0 到 alloc_size 对齐]
+ *   [BlockHeader{disk_size, checksum, flags, unused[3]}] [镜像 size 字节] [补 0 到 alloc_size 对齐]
  *
  *   disk_size 是**对齐后的总长度**（含 header），size 是镜像精确长度。
  *   两者必须分开存 —— 见 write() 里的说明。

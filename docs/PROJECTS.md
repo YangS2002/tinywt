@@ -29,7 +29,7 @@ make grade         # 看总分从 3/49 往上走
 
 | 给定 | 你写 |
 |---|---|
-| 全部类型、位布局、enum、成员变量、接口签名 | 156 个函数体 |
+| 全部类型、位布局、enum、成员变量、接口签名 | 190 个函数体 |
 | 49 个评分项（测试 + harness + 评分器） | —— |
 | 真 `wiredtiger.h` + ABI 合同探针 | —— |
 | 页 / update 链 / WAL 记录 / HS 的**字段定义** | 链维护、reconcile 归并、split、evict、下探、回放 |
@@ -89,7 +89,7 @@ make grade         # 看总分从 3/49 往上走
 4. **两套结构并存**：链上的旧键和跳表里的新键，读的时候要归并取小
 5. **History Store**：旧版本搬家 + 读取时按 `read_ts` 下探
 6. **三层时间戳**：`stable` / `pinned` / `oldest`，以及从 stable 回滚的 RTS
-7. **`WT_REF` 状态机 + hazard pointer**：`DISK → READING → MEM → LOCKED`
+7. **`WT_REF` 状态机 + hazard pointer**：`DISK → LOCKED(reading) → MEM`，淘汰走 `MEM → LOCKED → DISK`
 8. **WAL 与 checkpoint 的 LSN 对齐**：恢复点、截断点、turtle 的简化版
 
 那为什么 Project 编号看着像 15-445？因为「底座 → 结构 → 操作 → 并发」这个由浅入深的
@@ -174,7 +174,7 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 
 | 子项目 | 目标 | 函数 | 评分项 | 关键概念 |
 |---|---|---|---|---|
 | T4.1 并发 L1：tree 级锁 | **跨切面**：给公开入口加 `shared_lock` / `unique_lock` | 0 新函数（在十几个公开入口加锁） | 1 | 递归加锁会自锁 → 入口加锁、内部假定已持有 |
-| T4.2 WT_REF + hazard | 状态机 `DISK→READING→MEM→LOCKED`、hazard 槽 | 8 | 2 | 读线程被淘汰线程踩到 = use-after-free |
+| T4.2 WT_REF + hazard | 状态机 `DISK→LOCKED→MEM`、hazard 槽 | 8 | 2 | 读线程被淘汰线程踩到 = use-after-free |
 | T4.3 History Store | 旧版本搬家 + 读取下探（`HistoryReader` 钩子） | 6 | 2 | 判据是 `oldest = min(stable, pinned)`，不是 stable |
 | T4.4 未提交 reconcile + RTS | 未决 update 的落盘形态、crash 后回滚 | 3 | 1 | RTS 从 stable 点回滚，不是最新点 |
 | T4.5 watermark | `oldest = min(stable, pinned)` | 1 | 1 | 长事务会卡住水位 → HS 和 cache 都涨 |
@@ -184,7 +184,7 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ─┬─▶ cp1 (T3.0–T3.2: 合同 
 | 关卡 | 内容 | 过关标准 |
 |---|---|---|
 | C1 | 真 `wtperf` 全家桶（populate / read / update / evict / checkpoint / long-txn） | 全部跑通，无符号缺失 |
-| C2 | 真 `wt` 工具子集（`wt list` / `wt dump` / `wt verify`） | 能读自己写的库 |
+| C2 | 真 `wt` 工具子集（`wt list` / `wt dump` / `wt load` / `wt dump -x`） | 能读自己写的库，dump↔load 互为逆操作 |
 | C3 | 对照组：同一 runner 跑真 WT，对比吞吐 / 空间放大 | 差距在可解释范围内 |
 | C4 | 排行榜：`docs/LEADERBOARD.md` 填数字 | 至少一条曲线 |
 
@@ -285,11 +285,21 @@ CMake 是事实来源，Makefile 只是短命令：
 | `make probe` | 目标 `abi_probe_obj` | 编译期合同 |
 | `make probe-link` | 目标 `abi_link_check` | 链接期合同（缺哪个接口报哪个符号） |
 | `make wt-abi` | `scripts/wt_abi.py` | 真工具要的符号 vs 我们导出的，差几个 |
-| `make shared` | 目标 `wiredtiger` | `build/libwiredtiger.so` |
+| `make shared` | 目标 `wiredtiger` | `build/libwiredtiger.so`（Debug） |
+| `make perf-shared` | 同上，`build-perf/` + Release | 性能对比用的库（C3 / 手测都该用它） |
 | `make asan` / `tsan` | 独立构建目录 + `-DTINYWT_SANITIZE=` | 越界 / 数据竞争 |
 | `make cp1` / `cp2` | `scripts/checkpoint.sh 1\|2` | 人工门 |
 | `make capstone` | `scripts/capstone.sh` | C1–C4 |
 | `make capstone-selftest` | 同上 + `SHLIB` 指真库 | 验**判据**本身（换真库跑应全绿） |
+| `make bench` | `scripts/bench.sh`（Release，`build-perf/`） | 自己的吞吐曲线；`REAL=1` 与真 WT 同场对比 |
+| `make diff-wt` | `scripts/diff_wt.sh` | 行为对拍：同一操作流，两库 dump 逐字节比 |
+| `make crash` | `scripts/crash.sh` | SIGKILL 后重开，验「已提交/已 checkpoint 前缀」不变式 |
+| `make doctor` | `scripts/doctor.sh` | 环境体检（工具链 / 真 WT / 构建产物 / 磁盘） |
+
+> `bench` / `diff-wt` / `crash` 的执行体都是 `bench/wt_client.c`：它只 include 公开的
+> `wiredtiger.h`，走和 `wtperf` 同一套方法表。链的是我们的 `.so`，运行时用
+> `LD_LIBRARY_PATH` 换成真库 —— 所以「对照组」跑的是**同一个二进制**，不是另一份代码。
+> 它们都不产生 `RESULT` 行，不进 49 项评分。
 
 > **`probe-link` 只查它列出的那些符号**：`--no-undefined` 挑的是
 > `abi_probe.c` 里 `twt_probe_functions[]` 那份清单。清单短一个，就等于放过
@@ -421,19 +431,24 @@ $ readelf -rW $WT_SRC/build/wt | grep R_X86_64_COPY                             
 符号齐了只是"动态链接器肯加载"。剩下 34 个空桩还在 `src/api/wt_tool_abi.cpp` 里，
 `make wt-abi` 会连"还有几个是空桩"一起报。
 
-### 错误码（只差 3 的两个负数）
+### 错误码（九个，不是六个）
 
-| 常量 | 值 |
-|---|---|
-| `WT_ROLLBACK` | -31800 |
-| `WT_DUPLICATE_KEY` | -31801 |
-| `WT_ERROR` | -31802 |
-| `WT_NOTFOUND` | -31803 |
-| `WT_PANIC` | -31804 |
-| `WT_RESTART` | -31805 |
+| 常量 | 值 | 常量 | 值 |
+|---|---|---|---|
+| `WT_ROLLBACK` | -31800 | `WT_RUN_RECOVERY` | -31806 |
+| `WT_DUPLICATE_KEY` | -31801 | `WT_CACHE_FULL` | -31807 |
+| `WT_ERROR` | -31802 | `WT_PREPARE_CONFLICT` | -31808 |
+| `WT_NOTFOUND` | -31803 | `WT_TRY_SALVAGE` | -31809 |
+| `WT_PANIC` | -31804 | | |
+| `WT_RESTART` | -31805 | | |
 
-`test/contract/abi_probe.c` 用 `_Static_assert` 钉死；`make probe` 编译期就能抓到偏差，
-`make probe-link` 进一步把缺的接口交给链接器。
+`test/contract/abi_probe.c` 用 `_Static_assert` 把**九个**全钉死；`make probe` 编译期就能
+抓到偏差，`make probe-link` 进一步把缺的接口交给链接器。
+
+> ★ tinywt 自己的 `S_NOTSUP / S_IO / S_CORRUPT` **不能**用 -31806…-31808：那三个号在
+> 真 WT 里是 `WT_RUN_RECOVERY / WT_CACHE_FULL / WT_PREPARE_CONFLICT`。私有状态放在
+> -319xx，只经 `twt_wt_rc()` 映射成公开错误码 —— 否则学生的 `S_IO` 透到 wtperf 那一侧
+> 会被当成「cache 满，重试」。
 
 ---
 

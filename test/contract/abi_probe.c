@@ -73,11 +73,21 @@ twt_probe_members(WT_CONNECTION *conn, WT_SESSION *ses, WT_CURSOR *cur, WT_CONFI
 /* 编译期常量合同：错误码数值必须与真 WT 一致（wtperf 判 ret == WT_NOTFOUND）
  * 真值来源：dist/api_err.py（注释写明 "These numbers cannot change without
  * breaking backward compatibility"）。tinywt 的 twt::Status 必须逐一对齐，
- * C ABI 边界（src/api/）只做 twt::Status ↔ int 的**恒等**映射。 */
+ * C ABI 边界（src/api/）只做 twt::Status ↔ int 的**恒等**映射。
+ *
+ * ★ 九个都要钉，不能只钉四个：WT_RUN_RECOVERY / WT_CACHE_FULL /
+ *   WT_PREPARE_CONFLICT 这三个正是 tinywt 最容易拿来当「私有状态码」的号段
+ *   （-31806/-31807/-31808）。钉住它们，私有状态一旦撞号，make probe 当场红。 */
 _Static_assert(WT_ROLLBACK == -31800, "WT_ROLLBACK 数值变了");
 _Static_assert(WT_DUPLICATE_KEY == -31801, "WT_DUPLICATE_KEY 数值变了");
 _Static_assert(WT_ERROR == -31802, "WT_ERROR 数值变了");
 _Static_assert(WT_NOTFOUND == -31803, "WT_NOTFOUND 数值变了，wtperf 判断会失效");
+_Static_assert(WT_PANIC == -31804, "WT_PANIC 数值变了");
+_Static_assert(WT_RESTART == -31805, "WT_RESTART 数值变了");
+_Static_assert(WT_RUN_RECOVERY == -31806, "WT_RUN_RECOVERY 数值变了（私有状态不能占这个号）");
+_Static_assert(WT_CACHE_FULL == -31807, "WT_CACHE_FULL 数值变了（私有状态不能占这个号）");
+_Static_assert(WT_PREPARE_CONFLICT == -31808, "WT_PREPARE_CONFLICT 数值变了（私有状态不能占这个号）");
+_Static_assert(WT_TRY_SALVAGE == -31809, "WT_TRY_SALVAGE 数值变了");
 
 /* 锚点：保证上面两个探针符号不被优化掉，同时消除 unused 告警 */
 __attribute__((used)) void

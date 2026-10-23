@@ -98,14 +98,21 @@ P4 就是这四件事，一件一个 Task。
 ### WT_REF 状态机
 
 ```
-   DISK ──page_in──▶ READING ──▶ MEM ──evict 抢占──▶ LOCKED
-     ▲                             │                    │
-     └──────── 淘汰完成 ────────────┴────────────────────┘
+   读入：  DISK ──CAS(DISK→LOCKED)──▶ LOCKED(reading) ──读完──▶ MEM
+   淘汰：  MEM  ──CAS(MEM→LOCKED)───▶ LOCKED ──reconcile──▶ DISK
+   作废：  DELETED（fast-delete 后）/ SPLIT（父页分裂后）
 ```
+
+真 WT 只有这五个状态（`src/include/btmem.h:1093-1097`）：
+`DISK(0) / DELETED(1) / LOCKED(2) / MEM(3) / SPLIT(4)`。
+**没有 READING 状态** ——「正在读入」是 `WT_REF_FLAG_READING` 标志位
+（`btmem.h:1086`），不是状态。`src/btree/bt_read.c:112` 先把状态 CAS 成
+`LOCKED`，`bt_read.c:129` 再置 `WT_REF_FLAG_READING`，读完才 `set` 成 `MEM`。
 
 为什么需要 `LOCKED` 而不直接锁页：eviction 要先把页从「可被别人 page_in」的
 状态**摘出来**，否则会出现「A 正在 page_in、B 也在 page_in」的重复实例化。
-真 WT 用 CAS 把 `MEM → LOCKED`，赢的人才拥有这个 ref。
+真 WT 用 CAS 抢，赢的人才拥有这个 ref；`reading` 标志用来区分
+「page_in 的赢家」和「eviction 的赢家」。
 
 本作业用 `Ref::state`（`include/tinywt/storage/page.h`）+ 一把内部小锁做等价的事；
 测试通过 `Btree::root_ref_state()` 观察迁移：

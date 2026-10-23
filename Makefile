@@ -17,6 +17,10 @@
 #   make wt-abi           # 量「真工具要的符号 - 我们导出的」还差哪几个
 #   make cp1 / cp2        # Checkpoint gate（不计分，没过不准进下一段）
 #   make capstone         # C1–C4 结业验收
+#   make bench            # 自己的性能曲线（不等 wtperf；REAL=1 对比真 WT）
+#   make diff-wt          # 行为对拍：同一操作流，tinywt vs 真 WT，dump 必须一致
+#   make crash            # 崩溃一致性：SIGKILL 后重开，已提交前缀不能丢
+#   make doctor           # 环境体检：工具链 / 真 WT / 构建产物 / 磁盘
 #   make asan / tsan      # 独立的 sanitizer 构建目录，不污染 build/
 #   make clean
 #
@@ -24,6 +28,7 @@
 #   build/bin/<project>_<name>_test    测试二进制
 #   build/lib/libtinywt.a              C++ 内核静态库
 #   build/libwiredtiger.so             drop-in 共享库
+#   build/bin/wt_client                ABI 级客户端（bench / diff / crash）
 
 BUILD      ?= build
 BUILD_ASAN ?= build-asan
@@ -32,8 +37,9 @@ CMAKE      ?= cmake
 TYPE       ?= Debug
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 
-.PHONY: all configure build test grade clean probe probe-link shared \
-        cp1 cp2 capstone asan tsan todo check-docs format wt-tools wt-abi
+.PHONY: all configure build test grade clean probe probe-link shared perf-shared \
+        cp1 cp2 capstone asan tsan todo check-docs format wt-tools wt-abi \
+        bench diff-wt crash doctor
 
 all: test
 
@@ -82,6 +88,15 @@ probe-link: build
 shared: build
 	@$(CMAKE) --build $(BUILD) --target wiredtiger -j $(JOBS)
 
+# Release 版 drop-in 库 —— **性能对比必须用它**。
+# 原因：build/ 是 Debug(-O0)，真 WT 是 Release；拿 -O0 的库去比吞吐，
+# 量到的是编译选项的差距，不是实现的差距。C3 用法：
+#   SHLIB=$PWD/build-perf/libwiredtiger.so make capstone
+perf-shared:
+	@$(CMAKE) -S . -B build-perf -DCMAKE_BUILD_TYPE=Release -DTINYWT_BUILD_TESTS=OFF >/dev/null
+	@$(CMAKE) --build build-perf -j $(JOBS) --target wiredtiger
+	@echo "Release 库：build-perf/libwiredtiger.so.11.3.0"
+
 # ---------------------------------------------------------------- 真工具链
 # 一次性准备：克隆固定 tag 的 WT + 编出 wt / wtperf（源码在 external/，不进仓库）
 wt-tools:
@@ -112,6 +127,24 @@ capstone: build
 capstone-selftest: build
 	@SELFTEST=1 RUNNERS="" SHLIB=$$PWD/external/wiredtiger/build/libwiredtiger.so \
 	  bash scripts/capstone.sh
+
+# ---------------------------------------------------------------- 观测与对拍
+# 三个都不属于评分面。它们回答三个评分器回答不了的问题：
+#   现在多快？         → make bench     （Release 构建，中位数，可选 REAL=1 对比真 WT）
+#   行为和 WT 一样吗？ → make diff-wt   （同一确定性操作流，两个引擎 dump 逐字节比）
+#   崩了数据还对吗？   → make crash     （SIGKILL 后重开，已提交前缀不能丢）
+# 执行体都是 bench/wt_client.c —— 它只走公开 C ABI，和 wtperf 同一套方法表。
+bench:
+	@bash scripts/bench.sh
+
+diff-wt: build
+	@bash scripts/diff_wt.sh
+
+crash: build
+	@bash scripts/crash.sh
+
+doctor:
+	@bash scripts/doctor.sh
 
 # ---------------------------------------------------------------- sanitizer
 # 用独立构建目录：避免「跑完 asan 忘了 make clean」这类坑。
@@ -160,4 +193,4 @@ check-docs: build
 	@python3 scripts/check_docs.py
 
 clean:
-	rm -rf $(BUILD) $(BUILD_ASAN) $(BUILD_TSAN)
+	rm -rf $(BUILD) $(BUILD_ASAN) $(BUILD_TSAN) build-perf
