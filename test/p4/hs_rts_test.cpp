@@ -22,8 +22,6 @@
  *   2. 未提交 reconcile + RTS   → 晚于 stable 的版本被摘掉，stable 之前的不动
  *   3. watermark               → min(stable, pinned)；长事务挂着时水位不动
  * -*/
-#define TWT_PROJECT "P4"
-
 #include <string>
 
 #include "support/harness.hpp"
@@ -81,7 +79,7 @@ mk_upd(u64 start, u64 stop, u64 durable, Update *next = nullptr, bool prepared =
  *   在「骨架」和「已实现」两种状态下必须都不泄漏、不双重释放。
  *   做法：本对象在 Page **之后**声明 → 先于 Page 析构 → 先把链从 entry 上
  *   摘掉（Page 析构就看不到它），再自己 delete。异常展开时同样生效
- *   （CHECK_ST 命中 UNIMPLEMENTED 会抛出，不靠语句顺序收尾）。
+ *   （UNIMPLEMENTED 会抛出，不靠语句顺序收尾）。
  */
 struct UpdOwner {
     Page &page;
@@ -126,10 +124,8 @@ struct FakeHistory : twt::HistoryReader {
 } /* namespace */
 
 /* ---------------------------------------------------------------- 1. History Store */
-static void
-test_history_store()
+TWT_TEST(P4_HsRts, HistoryStore, "P4/T4.3 History Store")
 {
-    CASE("P4/T4.3 History Store");
     const std::string path = dbpath("p4_hs");
     rmpath(path);
 
@@ -150,39 +146,40 @@ test_history_store()
         w3.start_ts = 30;
         w3.durable_ts = 30;
 
-        CHECK_ST(hs.insert(1, k, w1, vv("v10"), false));
-        CHECK_ST(hs.insert(1, k, w2, vv("v20"), false));
-        CHECK_ST(hs.insert(1, k, w3, vv("v30"), false));
-        CHECK(hs.versions(1, k) == 3);
+        ASSERT_EQ(S_OK, hs.insert(1, k, w1, vv("v10"), false));
+        ASSERT_EQ(S_OK, hs.insert(1, k, w2, vv("v20"), false));
+        ASSERT_EQ(S_OK, hs.insert(1, k, w3, vv("v30"), false));
+        EXPECT_EQ(size_t(3), hs.versions(1, k));
 
         {
             Val out;
             bool found = false;
             TimeWindow got;
-            CHECK_ST(hs.read(1, k, 25, out, found, &got));
-            CHECK(found);
-            CHECK(sv(out) == "v20"); /* <=25 的最新版本是 20 */
-            CHECK(got.start_ts == 20);
+            ASSERT_EQ(S_OK, hs.read(1, k, 25, out, found, &got));
+            EXPECT_TRUE(found);
+            EXPECT_EQ("v20", sv(out)) << "<=25 的最新版本是 20";
+            EXPECT_EQ(u64(20), got.start_ts);
         }
         {
             Val out;
             bool found = true;
-            CHECK_ST(hs.read(1, k, 5, out, found));
-            CHECK(!found); /* 比最老的版本还老 → HS 里没有 */
+            ASSERT_EQ(S_OK, hs.read(1, k, 5, out, found));
+            EXPECT_FALSE(found) << "比最老的版本还老，HS 里应该没有";
         }
         {
             Val out;
             bool found = false;
-            CHECK_ST(hs.read(1, k, 35, out, found));
-            CHECK(found && sv(out) == "v30");
+            ASSERT_EQ(S_OK, hs.read(1, k, 35, out, found));
+            EXPECT_TRUE(found);
+            EXPECT_EQ("v30", sv(out));
         }
         /* btree_id 是 key 的一部分：另一棵树里同名 key 不能串味 */
         {
             Val out;
             bool found = true;
-            CHECK_ST(hs.read(2, k, 35, out, found));
-            CHECK(!found);
-            CHECK(hs.versions(2, k) == 0);
+            ASSERT_EQ(S_OK, hs.read(2, k, 35, out, found));
+            EXPECT_FALSE(found) << "别的 btree_id 读到了这棵树的版本";
+            EXPECT_EQ(size_t(0), hs.versions(2, k));
         }
 
         /* tombstone：读到它就是「这个时间点之后键没了」，不能再往下找更老的 */
@@ -190,67 +187,65 @@ test_history_store()
             TimeWindow w4;
             w4.start_ts = 40;
             w4.durable_ts = 40;
-            CHECK_ST(hs.insert(1, k, w4, Val{}, true));
-            CHECK(hs.versions(1, k) == 4);
+            ASSERT_EQ(S_OK, hs.insert(1, k, w4, Val{}, true));
+            EXPECT_EQ(size_t(4), hs.versions(1, k));
 
             Val out;
             bool found = true;
-            CHECK_ST(hs.read(1, k, 45, out, found));
-            CHECK(!found);
+            ASSERT_EQ(S_OK, hs.read(1, k, 45, out, found));
+            EXPECT_FALSE(found) << "tombstone 之后必须读不到（不能继续往下找更老的版本）";
         }
 
         /* 回收：清掉 start_ts < 25 的版本，剩下 30 和 40 */
-        CHECK_ST(hs.evict_older_than(25));
-        CHECK(hs.versions(1, k) == 2);
+        ASSERT_EQ(S_OK, hs.evict_older_than(25));
+        EXPECT_EQ(size_t(2), hs.versions(1, k));
         {
             Val out;
             bool found = false;
-            CHECK_ST(hs.read(1, k, 25, out, found));
-            CHECK(!found); /* 20 已被回收 */
+            ASSERT_EQ(S_OK, hs.read(1, k, 25, out, found));
+            EXPECT_FALSE(found) << "20 号版本应该已经被回收";
         }
-        CHECK(hs.size() > 0);
+        EXPECT_GT(hs.size(), size_t(0));
     }
 
     /* --- 1b. reconcile 写入侧：旧版本从 update 链搬进 HS，最新值不受影响 --- */
     {
         Btree bt;
-        CHECK_ST(bt.open(path, small_cfg()));
+        ASSERT_EQ(S_OK, bt.open(path, small_cfg()));
 
-        CHECK_ST(bt.put(Slice("k1"), Slice("old"), 1, 10));
-        CHECK_ST(bt.put(Slice("k1"), Slice("new"), 2, 20));
-        CHECK_ST(bt.put(Slice("k2"), Slice("only"), 1, 10));
+        ASSERT_EQ(S_OK, bt.put(Slice("k1"), Slice("old"), 1, 10));
+        ASSERT_EQ(S_OK, bt.put(Slice("k1"), Slice("new"), 2, 20));
+        ASSERT_EQ(S_OK, bt.put(Slice("k2"), Slice("only"), 1, 10));
 
         Watermark wm;
         wm.stable_ts = 20;
         wm.pinned_ts = 20; /* 没有长事务 → oldest = 20 */
 
         HistoryStore hs;
-        CHECK_ST(reconcile_with_history(bt, hs, wm));
-        CHECK(hs.size() > 0); /* k1 的 ts=10 版本被搬走了 */
+        ASSERT_EQ(S_OK, reconcile_with_history(bt, hs, wm));
+        EXPECT_GT(hs.size(), size_t(0)) << "k1 的 ts=10 版本应该被搬进 HS";
 
         {
             Val out;
-            CHECK_ST(bt.get(Slice("k1"), out));
-            CHECK(sv(out) == "new"); /* 搬走旧版本不影响最新值 */
-            CHECK_ST(bt.get(Slice("k2"), out));
-            CHECK(sv(out) == "only");
+            ASSERT_EQ(S_OK, bt.get(Slice("k1"), out));
+            EXPECT_EQ("new", sv(out)) << "搬走旧版本不影响最新值";
+            ASSERT_EQ(S_OK, bt.get(Slice("k2"), out));
+            EXPECT_EQ("only", sv(out));
         }
 
         /* 搬过之后树的读一致性不能被破坏 */
         std::string err;
-        CHECK_ST(bt.verify(err));
+        ASSERT_EQ(S_OK, bt.verify(err)) << "verify: " << err;
 
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, bt.close());
     }
 
     rmpath(path);
 }
 
 /* ---------------------------------------------------------------- 1b. 下探接线 */
-static void
-test_old_snapshot_descend()
+TWT_TEST(P4_HsRts, OldSnapshotDescend, "P4/T4.3 旧快照下探（HS 钩子接线）")
 {
-    CASE("P4/T4.3 旧快照下探（HS 钩子接线）");
     const std::string path = dbpath("p4_hs_descend");
     rmpath(path);
 
@@ -258,19 +253,19 @@ test_old_snapshot_descend()
     cfg.max_cached_pages = 4; /* cache 只够 4 页 → 制造真实淘汰 */
 
     Btree bt;
-    CHECK_ST(bt.open(path, cfg));
+    ASSERT_EQ(S_OK, bt.open(path, cfg));
 
     /* 先灌数据把 cache 搅动起来（证明读路径是在一个真的会淘汰的树上跑的） */
     for (int i = 0; i < 300; ++i)
-        CHECK_ST(bt.put(Slice(kstr(i)), Slice(vstr(i))));
-    CHECK(bt.stats().evictions > 0);
+        ASSERT_EQ(S_OK, bt.put(Slice(kstr(i)), Slice(vstr(i))));
+    EXPECT_GT(bt.stats().evictions, 0u);
 
     /*
      * k1 是 insert-only 键：镜像里没有 base，只有内存链上的 ts=20 版本。
      * 这正好对应「老版本已经在 HS 里」的形态（本版 base 无时间戳，
      * 见 tinywt/btree/btree.h 里 HistoryReader 的说明）。
      */
-    CHECK_ST(bt.put(Slice("k1"), Slice("mem-v20"), 1, 20));
+    ASSERT_EQ(S_OK, bt.put(Slice("k1"), Slice("mem-v20"), 1, 20));
 
     FakeHistory fh;
     bt.set_history_reader(&fh);
@@ -278,128 +273,123 @@ test_old_snapshot_descend()
     /* 1) 新快照：链上可见 → 不许下探 */
     {
         Val out;
-        CHECK_ST(bt.get(Slice("k1"), out, UINT64_MAX, 20));
-        CHECK(sv(out) == "mem-v20");
-        CHECK(fh.calls == 0);
+        ASSERT_EQ(S_OK, bt.get(Slice("k1"), out, UINT64_MAX, 20));
+        EXPECT_EQ("mem-v20", sv(out));
+        EXPECT_EQ(0, fh.calls) << "链上可见时不该去问 HS";
     }
 
     /* 2) 旧快照：链上不可见 → 必须下探，且 read_ts 要原样传下去 */
     {
         Val out;
-        CHECK_ST(bt.get(Slice("k1"), out, UINT64_MAX, 10));
-        CHECK(sv(out) == "hs-v15");
-        CHECK(fh.calls == 1);
-        CHECK(fh.last_ts == 10);
+        ASSERT_EQ(S_OK, bt.get(Slice("k1"), out, UINT64_MAX, 10));
+        EXPECT_EQ("hs-v15", sv(out));
+        EXPECT_EQ(1, fh.calls) << "旧快照必须下探到 HS";
+        EXPECT_EQ(u64(10), fh.last_ts) << "下探时 read_ts 必须原样传下去";
     }
 
     /* 3) 通道是可持续的：不是一次性状态 */
     {
         Val out;
-        CHECK_ST(bt.get(Slice("k1"), out, UINT64_MAX, 10));
-        CHECK(sv(out) == "hs-v15");
-        CHECK(fh.calls == 2);
+        ASSERT_EQ(S_OK, bt.get(Slice("k1"), out, UINT64_MAX, 10));
+        EXPECT_EQ("hs-v15", sv(out));
+        EXPECT_EQ(2, fh.calls);
     }
 
     /* 4) 摘掉通道 → 只能回落；镜像里没有 base，所以是 NOTFOUND */
     bt.set_history_reader(nullptr);
     {
         Val out;
-        CHECK_RC(bt.get(Slice("k1"), out, UINT64_MAX, 10), S_NOTFOUND);
+        EXPECT_EQ(S_NOTFOUND, bt.get(Slice("k1"), out, UINT64_MAX, 10));
     }
 
-    CHECK_ST(bt.close());
+    EXPECT_EQ(S_OK, bt.close());
     rmpath(path);
 }
 
 /* ---------------------------------------------------------------- 2. RTS */
-static void
-test_rollback_to_stable()
+TWT_TEST(P4_HsRts, RollbackToStable, "P4/T4.4 未提交 reconcile + RTS")
 {
-    CASE("P4/T4.4 未提交 reconcile + RTS");
     const std::string path = dbpath("p4_rts");
     rmpath(path);
 
     HistoryStore hs;
     Btree bt;
-    CHECK_ST(bt.open(path, small_cfg()));
+    ASSERT_EQ(S_OK, bt.open(path, small_cfg()));
 
     /* stable 之前的版本：必须留下 */
-    CHECK_ST(bt.put(Slice("k1"), Slice("stable"), 1, 10));
+    ASSERT_EQ(S_OK, bt.put(Slice("k1"), Slice("stable"), 1, 10));
     /* stable 之后的版本：模拟「崩溃时还没稳定」的写 */
-    CHECK_ST(bt.put(Slice("k1"), Slice("future"), 2, 100));
+    ASSERT_EQ(S_OK, bt.put(Slice("k1"), Slice("future"), 2, 100));
     /* 只存在于 stable 之后的键：回滚后必须整个消失 */
-    CHECK_ST(bt.put(Slice("k2"), Slice("ghost"), 2, 100));
+    ASSERT_EQ(S_OK, bt.put(Slice("k2"), Slice("ghost"), 2, 100));
 
     {
         Val out;
-        CHECK_ST(bt.get(Slice("k1"), out));
-        CHECK(sv(out) == "future"); /* 回滚前看到的是最新版本 */
+        ASSERT_EQ(S_OK, bt.get(Slice("k1"), out));
+        EXPECT_EQ("future", sv(out)) << "回滚前看到的是最新版本";
     }
 
-    CHECK_ST(rollback_to_stable(bt, hs, 50));
+    ASSERT_EQ(S_OK, rollback_to_stable(bt, hs, 50));
 
     {
         Val out;
-        CHECK_ST(bt.get(Slice("k1"), out));
-        CHECK(sv(out) == "stable"); /* 回到 stable 点 */
-        CHECK_RC(bt.get(Slice("k2"), out), S_NOTFOUND);
+        ASSERT_EQ(S_OK, bt.get(Slice("k1"), out));
+        EXPECT_EQ("stable", sv(out)) << "回滚后应该回到 stable 点";
+        EXPECT_EQ(S_NOTFOUND, bt.get(Slice("k2"), out)) << "只在 stable 之后存在的键必须消失";
     }
 
     /* 回滚必须幂等：再来一次不能把 stable 版本也啃掉 */
-    CHECK_ST(rollback_to_stable(bt, hs, 50));
+    ASSERT_EQ(S_OK, rollback_to_stable(bt, hs, 50));
     {
         Val out;
-        CHECK_ST(bt.get(Slice("k1"), out));
-        CHECK(sv(out) == "stable");
+        ASSERT_EQ(S_OK, bt.get(Slice("k1"), out));
+        EXPECT_EQ("stable", sv(out)) << "RTS 不幂等：第二次把 stable 版本也摘了";
     }
 
     /*
      * 更低的 stable 点：30 号版本的 k3 在 stable 之后 → 摘掉；
      * k1 剩下的 10 号版本 <= 20，必须留着（回滚是「> stable 才回滚」，不是「< 就留」）。
      */
-    CHECK_ST(bt.put(Slice("k3"), Slice("v3"), 3, 30));
-    CHECK_ST(rollback_to_stable(bt, hs, 20));
+    ASSERT_EQ(S_OK, bt.put(Slice("k3"), Slice("v3"), 3, 30));
+    ASSERT_EQ(S_OK, rollback_to_stable(bt, hs, 20));
     {
         Val out;
-        CHECK_RC(bt.get(Slice("k3"), out), S_NOTFOUND);
-        CHECK_ST(bt.get(Slice("k1"), out));
-        CHECK(sv(out) == "stable");
+        EXPECT_EQ(S_NOTFOUND, bt.get(Slice("k3"), out)) << "ts=30 > stable=20，必须被摘掉";
+        ASSERT_EQ(S_OK, bt.get(Slice("k1"), out));
+        EXPECT_EQ("stable", sv(out)) << "ts=10 <= stable=20，必须留着";
     }
 
     /* 空日志/已干净的库上 recovery 是幂等的，且不能吃掉数据 */
     {
-        CHECK_ST(bt.put(Slice("k4"), Slice("keep"), 4, 10));
-        CHECK_ST(recover_after_crash(bt, hs, 50));
+        ASSERT_EQ(S_OK, bt.put(Slice("k4"), Slice("keep"), 4, 10));
+        ASSERT_EQ(S_OK, recover_after_crash(bt, hs, 50));
         Val out;
-        CHECK_ST(bt.get(Slice("k4"), out));
-        CHECK(sv(out) == "keep");
+        ASSERT_EQ(S_OK, bt.get(Slice("k4"), out));
+        EXPECT_EQ("keep", sv(out)) << "recovery 把不该动的东西吃了";
         /* dirty_shutdown 标志没置位时 RTS 不该动数据；置位的路径由 capstone 的 kill -9 流程覆盖 */
-        CHECK_ST(recover_after_crash(bt, hs, 50));
+        EXPECT_EQ(S_OK, recover_after_crash(bt, hs, 50));
     }
 
-    CHECK_ST(bt.close());
+    EXPECT_EQ(S_OK, bt.close());
     rmpath(path);
 }
 
 /* ---------------------------------------------------------------- 3. watermark */
-static void
-test_watermark()
+TWT_TEST(P4_HsRts, Watermark, "P4/T4.5 watermark（stable 点）+ 时间窗口聚合")
 {
-    CASE("P4/T4.5 watermark（stable 点）+ 时间窗口聚合");
-
     /* --- 3a. oldest = min(stable, pinned) --- */
     {
         Watermark wm;
         wm.stable_ts = 30;
         wm.pinned_ts = 20;
-        CHECK(wm.oldest() == 20);
+        EXPECT_EQ(u64(20), wm.oldest());
 
         wm.stable_ts = 10;
-        CHECK(wm.oldest() == 10);
+        EXPECT_EQ(u64(10), wm.oldest());
 
         wm.stable_ts = 40;
         wm.pinned_ts = 40;
-        CHECK(wm.oldest() == 40);
+        EXPECT_EQ(u64(40), wm.oldest());
     }
 
     /* --- 3b. aggregate_stop_ts：窗口必须覆盖所有成员 --- */
@@ -426,10 +416,10 @@ test_watermark()
         page.entries.push_back(e2);
 
         TimeWindow agg;
-        CHECK_ST(aggregate_stop_ts(&page, agg));
-        CHECK(agg.start_ts == 10);   /* 最小 start：窗口要覆盖最老的版本 */
-        CHECK(agg.stop_ts == 40);    /* 最大 stop：要覆盖最晚的失效点 */
-        CHECK(agg.durable_ts == 5);  /* 最小 durable：最保守的持久化点 */
+        ASSERT_EQ(S_OK, aggregate_stop_ts(&page, agg));
+        EXPECT_EQ(u64(10), agg.start_ts) << "最小 start：窗口要覆盖最老的版本";
+        EXPECT_EQ(u64(40), agg.stop_ts) << "最大 stop：要覆盖最晚的失效点";
+        EXPECT_EQ(u64(5), agg.durable_ts) << "最小 durable：最保守的持久化点";
     }
 
     /* --- 3c. 空页：不报错，窗口留 0 --- */
@@ -438,53 +428,41 @@ test_watermark()
         empty.type = PAGE_ROW_LEAF;
         TimeWindow agg;
         agg.start_ts = 999;
-        CHECK_ST(aggregate_stop_ts(&empty, agg));
-        CHECK(agg.start_ts == 0);
-        CHECK(agg.stop_ts == 0);
+        ASSERT_EQ(S_OK, aggregate_stop_ts(&empty, agg));
+        EXPECT_EQ(u64(0), agg.start_ts);
+        EXPECT_EQ(u64(0), agg.stop_ts);
     }
 
     /* --- 3d. 长事务把水位钉住 → HS 不能回收 --- */
     {
         TxnManager mgr;
         Txn long_reader;
-        CHECK_ST(mgr.begin(long_reader, 10)); /* 读时间戳停在 10 的长事务 */
+        ASSERT_EQ(S_OK, mgr.begin(long_reader, 10)) << "读时间戳停在 10 的长事务";
 
         Watermark wm;
         wm.stable_ts = 50;
         wm.pinned_ts = long_reader.read_ts; /* 最老活跃读者 */
-        CHECK(wm.oldest() == 10);
+        EXPECT_EQ(u64(10), wm.oldest());
 
         /* oldest_active 用 id 表示，别和时间戳混用；这里只确认长事务还挂着 */
-        CHECK(mgr.oldest_active() == long_reader.id);
+        EXPECT_EQ(long_reader.id, mgr.oldest_active());
 
         HistoryStore hs;
         const Key k = key_of("blocked");
         TimeWindow tw;
         tw.start_ts = 30;
         tw.durable_ts = 30;
-        CHECK_ST(hs.insert(1, k, tw, vv("v30"), false));
+        ASSERT_EQ(S_OK, hs.insert(1, k, tw, vv("v30"), false));
 
         /* 水位被钉在 10 → 30 号版本还不能回收 */
-        CHECK_ST(hs.evict_older_than(wm.oldest()));
-        CHECK(hs.versions(1, k) == 1);
+        ASSERT_EQ(S_OK, hs.evict_older_than(wm.oldest()));
+        EXPECT_EQ(size_t(1), hs.versions(1, k)) << "长事务挂着时回收了它还要读的版本";
 
         /* 长事务结束，水位追上 stable → 可以回收 */
-        CHECK_ST(mgr.commit(long_reader, 50));
+        ASSERT_EQ(S_OK, mgr.commit(long_reader, 50));
         wm.pinned_ts = 50;
-        CHECK(wm.oldest() == 50);
-        CHECK_ST(hs.evict_older_than(wm.oldest()));
-        CHECK(hs.versions(1, k) == 0);
+        EXPECT_EQ(u64(50), wm.oldest());
+        ASSERT_EQ(S_OK, hs.evict_older_than(wm.oldest()));
+        EXPECT_EQ(size_t(0), hs.versions(1, k)) << "水位追上之后应该能回收";
     }
-}
-
-int
-main()
-{
-    setvbuf(stdout, nullptr, _IONBF, 0);
-    printf("tinywt P4: history store / RTS / watermark\n");
-    RUN(test_history_store);
-    RUN(test_old_snapshot_descend);
-    RUN(test_rollback_to_stable);
-    RUN(test_watermark);
-    return harness_report();
 }

@@ -29,6 +29,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j   # 或�
 make todo              # 我这段要写哪些函数？（按子项目分组，带 file:line）
 make grade             # 逐项打分：49 个评分项，未实现记 TODO，不中断
 make p2-test           # 只跑 P2
+make p2-test FILTER='P2_Btree.*'   # 只跑匹配的测例（透传 --gtest_filter）
 make check-docs        # 文档里的数字/路径/链接是否还和代码一致
 make wt-tools          # 一次性：拉真 WT 源码并编出 wt / wtperf（Capstone 前置）
 make wt-abi            # 量工具面进度：真工具要的符号，我们导出齐了没
@@ -93,12 +94,14 @@ include/tinywt/       公共头（布局 = ABI 契约，不要改）
 src/                  实现（★ 主战场），目录与 include/tinywt/ 一一对应
   api/                  C ABI 层（capi.h 是私有头，不对外）
 test/
-  support/harness.hpp   RUN / CASE / SCORE / 异常防火墙
+  support/harness.hpp   GoogleTest 适配层：BEGIN / RESULT / SCORE + 崩溃看门狗
+  support/gtest_main.cpp 测试二进制的 main()（挂监听器、起 RUN_ALL_TESTS）
   contract/abi_probe.c  错误码数值 + iface 布局（编译期 + 链接期合同）
   p0/ p1/ p2/ p3/ p4/   与 Project 同编号
 scripts/              grade.py / todo.py / checkpoint.sh / capstone.sh
 third_party/
   wiredtiger/include/wiredtiger.h   真 WT 11.3.x 头文件（合同来源）
+  googletest/                       测试框架源码（内置，不装系统包）
 ```
 
 ---

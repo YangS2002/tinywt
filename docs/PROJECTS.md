@@ -44,7 +44,7 @@ make grade         # 看总分从 3/49 往上走
 **借的只有作业形式**（四条，跟学什么无关）：
 
 1. 一个 Project = 一组能独立编译、独立验收的测试二进制
-2. 一个测试函数 = 一个评分项，harness 打 `PASS / FAIL / NOTIMPL / ERROR`
+2. 一个测试函数 = 一个评分项（GoogleTest 的 `TWT_TEST`），harness 打 `PASS / FAIL / NOTIMPL / ERROR`
 3. 门禁：`cp1` / `cp2` 过了才准进下一段
 4. 链接器当评分器：拿真头文件、真工具链，缺符号就链不上
 
@@ -246,7 +246,8 @@ tinywt/
 │       ├── capi.h
 │       └── {config,connection,cursor}.cpp
 ├── test/
-│   ├── support/harness.hpp     RUN / CASE / SCORE / 异常防火墙
+│   ├── support/harness.hpp     GoogleTest 适配层：BEGIN / RESULT / SCORE + 看门狗
+│   ├── support/gtest_main.cpp  测试二进制的 main()（挂监听器、RUN_ALL_TESTS）
 │   ├── contract/abi_probe.c    错误码数值 + iface 布局（编译期 + 链接期）
 │   ├── p0/defs_test.cpp
 │   ├── p1/block_cell_test.cpp
@@ -257,6 +258,7 @@ tinywt/
 │                               lib_wt.sh / wt_tools.sh / wt_abi.py / gen_wiredtiger_h.py
 └── third_party/
     ├── wiredtiger/include/wiredtiger.h   ← 真 WT 11.3.x 头文件（合同来源）
+    ├── googletest/                       ← 测试框架源码（内置；apt 装 libgtest-dev 要 sudo）
     └── (external/wiredtiger)             ← 真 WT 完整克隆 + 构建产物（make wt-tools，gitignore）
 ```
 
@@ -279,6 +281,7 @@ CMake 是事实来源，Makefile 只是短命令：
 | `make build` | `cmake --build build -j` | 编译 |
 | `make test` | 逐个跑 `build/bin/*_test` | 全量测试 |
 | `make p2-test` | 只跑 `build/bin/p2_*_test` | 单段测试 |
+| `make p2-test FILTER='P2_Btree.*'` | 同上 + `--gtest_filter` | 单个测例 |
 | `make grade` | `python3 scripts/grade.py build/bin/*_test` | 逐项打分 |
 | `make todo` | `python3 scripts/todo.py [-p P2] [-c]` | 待写函数导航 |
 | `make check-docs` | `python3 scripts/check_docs.py` | 文档与代码对账（数字 / 路径 / 链接） |
@@ -310,7 +313,8 @@ CMake 是事实来源，Makefile 只是短命令：
 **评分怎么算**：一个测试函数 = 一个评分项。harness 每一项**开跑前**打一行
 `BEGIN <proj> <name>`，**跑完立刻**打 `RESULT <proj> <name> <status> <pass> <fail>`，
 `grade.py` 只做汇总。状态只有四种：`PASS` / `FAIL`（写错了）/ `NOTIMPL`（还没写）/
-`ERROR`（抛了别的异常或零断言）。
+`ERROR`（抛了别的异常）。测例用 GoogleTest 写（`TWT_TEST` + `EXPECT_*`），
+harness 通过 `TestEventListener` 把每一个 `TEST` 映射成一条 `RESULT`。
 
 > **为什么逐项打、还要一行 BEGIN**：`RESULT` 以前是等全部跑完统一打的，于是
 > 进程中途崩一次（段错误 / `abort` / `std::terminate`）就**一行都没有**，

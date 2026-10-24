@@ -18,8 +18,6 @@
  *   2. WT_REF 状态机 + hazard pointer
  *   3. 读线程 + 疯狂淘汰（无悬空，ASan 下跑）
  * -*/
-#define TWT_PROJECT "P4"
-
 #include <atomic>
 #include <map>
 #include <random>
@@ -64,17 +62,14 @@ cfg_for(size_t leaf, size_t pages)
 } /* namespace */
 
 /* ---------------------------------------------------------------- 1. 并发 L1 */
-static void
-test_concurrent_l1()
+TWT_TEST(P4_Concurrency, ConcurrentL1, "P4/T4.1 并发 L1（4 线程对拍 std::map）")
 {
-    CASE("P4/T4.1 并发 L1（4 线程对拍 std::map）");
-
     for (int seed = 1; seed <= 2; ++seed) {
         const std::string path = dbpath("p4_cc_l1_s" + std::to_string(seed));
         rmpath(path);
 
         Btree bt;
-        CHECK_ST(bt.open(path, cfg_for(16, 32)));
+        ASSERT_EQ(S_OK, bt.open(path, cfg_for(16, 32)));
 
         /*
          * 每个线程只碰自己那一段键，期望值放各自的 map 里 ——
@@ -131,7 +126,7 @@ test_concurrent_l1()
         for (auto &th : ths)
             th.join();
 
-        CHECK(mismatches.load() == 0);
+        EXPECT_EQ(0, mismatches.load()) << "seed=" << seed << "：并发操作与各自预期值不符";
 
         /* 终态全量对拍 */
         std::map<std::string, std::string> all;
@@ -151,82 +146,79 @@ test_concurrent_l1()
                 ++wrong;
             }
         }
-        CHECK(wrong == 0);
+        EXPECT_EQ(0, wrong) << "seed=" << seed << "：终态全量对拍有 " << wrong << " 个不对";
 
         /* 并发写必须真的把树撑到多页，否则这条测试等于什么都没测 */
-        CHECK(bt.stats().splits > 0);
-        CHECK(bt.root_page_id() > 1);
+        EXPECT_GT(bt.stats().splits, 0u);
+        EXPECT_GT(bt.root_page_id(), u32(1)) << "根页还是 1，树根本没长起来";
 
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, bt.close());
         rmpath(path);
     }
 }
 
 /* ---------------------------------------------------------------- 2. 状态机 + hazard */
-static void
-test_ref_state_and_hazard()
+TWT_TEST(P4_Concurrency, RefStateAndHazard, "P4/T4.2 WT_REF 状态机 + hazard pointer")
 {
-    CASE("P4/T4.2 WT_REF 状态机 + hazard pointer");
-
     /* --- 2a. hazard pointer 单元语义 --- */
     {
         Page p1, p2, p3;
         HazardPointer hp;
 
-        CHECK(!hp.holds(&p1));
+        EXPECT_FALSE(hp.holds(&p1));
         hp.set(0, &p1);
-        CHECK(hp.holds(&p1));
-        CHECK(!hp.holds(&p2));
+        EXPECT_TRUE(hp.holds(&p1));
+        EXPECT_FALSE(hp.holds(&p2));
 
         /* 不同槽互不影响：真 WT 一个线程可能同时持有多个页 */
         hp.set(1, &p2);
-        CHECK(hp.holds(&p1));
-        CHECK(hp.holds(&p2));
+        EXPECT_TRUE(hp.holds(&p1));
+        EXPECT_TRUE(hp.holds(&p2));
 
         hp.clear(0);
-        CHECK(!hp.holds(&p1));
-        CHECK(hp.holds(&p2)); /* 清 0 号槽不能把 1 号一起清掉 */
+        EXPECT_FALSE(hp.holds(&p1));
+        EXPECT_TRUE(hp.holds(&p2)) << "清 0 号槽不能把 1 号一起清掉";
 
         hp.set(0, &p3); /* 槽可复用 */
-        CHECK(hp.holds(&p3));
+        EXPECT_TRUE(hp.holds(&p3));
         hp.clear(0);
         hp.clear(1);
-        CHECK(!hp.holds(&p2));
-        CHECK(!hp.holds(&p3));
+        EXPECT_FALSE(hp.holds(&p2));
+        EXPECT_FALSE(hp.holds(&p3));
     }
 
     /* --- 2b. 登记表：attach / detach / any_holds / threads --- */
     {
         HazardRegistry &reg = hazard_registry();
-        CHECK(&hazard_registry() == &reg); /* 必须是同一个单例 */
+        EXPECT_EQ(&reg, &hazard_registry()) << "必须是同一个单例";
 
         Page target, other;
         const size_t base = reg.threads();
 
         HazardPointer hp;
         reg.attach(&hp);
-        CHECK(reg.threads() == base + 1);
-        CHECK(!reg.any_holds(&target)); /* 没登记就不能拦住淘汰 */
+        EXPECT_EQ(base + 1, reg.threads());
+        EXPECT_FALSE(reg.any_holds(&target)) << "没登记就不能拦住淘汰";
 
         hp.set(0, &target);
-        CHECK(hp.holds(&target));
+        EXPECT_TRUE(hp.holds(&target));
         /* 淘汰方的视角：有人在用 → 不能 free */
-        CHECK(reg.any_holds(&target));
-        CHECK(!reg.any_holds(&other));
+        EXPECT_TRUE(reg.any_holds(&target));
+        EXPECT_FALSE(reg.any_holds(&other));
 
         hp.set(5, &other); /* 登记在非 0 号槽也必须被扫到 */
-        CHECK(reg.any_holds(&other));
+        EXPECT_TRUE(reg.any_holds(&other));
 
         hp.clear(0);
-        CHECK(!reg.any_holds(&target));
-        CHECK(reg.any_holds(&other));
+        EXPECT_FALSE(reg.any_holds(&target));
+        EXPECT_TRUE(reg.any_holds(&other));
 
         hp.clear(5);
         reg.detach(&hp);
-        CHECK(reg.threads() == base);
+        EXPECT_EQ(base, reg.threads());
 
         /* detach 之后，即使指针没清也不能再影响淘汰判断 */
-        CHECK(!reg.any_holds(&other));
+        EXPECT_FALSE(reg.any_holds(&other));
     }
 
     /* --- 2c. Btree::root_ref_state：DISK → MEM 的迁移 --- */
@@ -236,29 +228,29 @@ test_ref_state_and_hazard()
 
         {
             Btree bt;
-            CHECK_ST(bt.open(path, cfg_for(8, 8)));
+            ASSERT_EQ(S_OK, bt.open(path, cfg_for(8, 8)));
             for (int i = 0; i < 120; ++i)
-                CHECK_ST(bt.put(Slice(kstr(i)), Slice(vstr(i))));
-            CHECK_ST(bt.checkpoint());
-            CHECK_ST(bt.close());
+                ASSERT_EQ(S_OK, bt.put(Slice(kstr(i)), Slice(vstr(i))));
+            ASSERT_EQ(S_OK, bt.checkpoint());
+            ASSERT_EQ(S_OK, bt.close());
         }
 
         Btree bt;
-        CHECK_ST(bt.open(path, cfg_for(8, 8)));
+        ASSERT_EQ(S_OK, bt.open(path, cfg_for(8, 8)));
         /*
          * 契约：open 只从超级块建立 Ref，不读页。
          * 第一次 descend 才 DISK → LOCKED(reading=true) → MEM。
          */
-        CHECK(bt.root_ref_state() == REF_DISK);
+        EXPECT_EQ(REF_DISK, bt.root_ref_state()) << "open 不该顺手把根页读进来";
 
         {
             Val out;
-            CHECK_ST(bt.get(Slice(kstr(0)), out));
-            CHECK(sv(out) == vstr(0));
+            ASSERT_EQ(S_OK, bt.get(Slice(kstr(0)), out));
+            EXPECT_EQ(vstr(0), sv(out));
         }
-        CHECK(bt.root_ref_state() == REF_MEM);
+        EXPECT_EQ(REF_MEM, bt.root_ref_state()) << "descend 之后根页应该已经在内存里";
 
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, bt.close());
         rmpath(path);
     }
 
@@ -268,21 +260,18 @@ test_ref_state_and_hazard()
         rmpath(path);
 
         Btree bt;
-        CHECK_ST(bt.open(path, cfg_for(8, 8)));
-        CHECK_ST(bt.put(Slice(kstr(0)), Slice(vstr(0))));
-        CHECK(bt.root_ref_state() == REF_MEM);
+        ASSERT_EQ(S_OK, bt.open(path, cfg_for(8, 8)));
+        ASSERT_EQ(S_OK, bt.put(Slice(kstr(0)), Slice(vstr(0))));
+        EXPECT_EQ(REF_MEM, bt.root_ref_state());
 
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, bt.close());
         rmpath(path);
     }
 }
 
 /* ---------------------------------------------------------------- 3. 读 + 疯狂淘汰 */
-static void
-test_reader_under_eviction()
+TWT_TEST(P4_Concurrency, ReaderUnderEviction, "P4/T4.2 读线程 + 疯狂淘汰（页被淘汰不悬空）")
 {
-    CASE("P4/T4.2 读线程 + 疯狂淘汰（页被淘汰不悬空）");
-
     const std::string path = dbpath("p4_cc_evict");
     rmpath(path);
     constexpr int kStable = 600; /* 读线程只看这一段，值永远不变 */
@@ -290,9 +279,9 @@ test_reader_under_eviction()
 
     Btree bt;
     /* cache 只够放 4 页 → 遍历时几乎每次 descend 都会触发淘汰 */
-    CHECK_ST(bt.open(path, cfg_for(8, 4)));
+    ASSERT_EQ(S_OK, bt.open(path, cfg_for(8, 4)));
     for (int i = 0; i < kStable; ++i)
-        CHECK_ST(bt.put(Slice(kstr(i)), Slice(vstr(i))));
+        ASSERT_EQ(S_OK, bt.put(Slice(kstr(i)), Slice(vstr(i))));
 
     std::atomic<int> bad{0};
     std::atomic<bool> stop{false};
@@ -343,10 +332,10 @@ test_reader_under_eviction()
     stop.store(true);
     ths[0].join();
 
-    CHECK(bad.load() == 0);
+    EXPECT_EQ(0, bad.load()) << "并发读/淘汰过程中出现了错误结果";
 
     /* 淘汰确实发生过；否则这条测试没测到东西 */
-    CHECK(bt.stats().evictions > 0);
+    EXPECT_GT(bt.stats().evictions, 0u) << "cache 只给 4 页，不可能没淘汰";
 
     /* 收尾：稳定段全量校验 */
     int wrong = 0;
@@ -355,19 +344,8 @@ test_reader_under_eviction()
         if (bt.get(Slice(kstr(k)), out) != S_OK || sv(out) != vstr(k))
             ++wrong;
     }
-    CHECK(wrong == 0);
+    EXPECT_EQ(0, wrong) << "稳定段被并发淘汰弄坏了 " << wrong << " 个键";
 
-    CHECK_ST(bt.close());
+    EXPECT_EQ(S_OK, bt.close());
     rmpath(path);
-}
-
-int
-main()
-{
-    setvbuf(stdout, nullptr, _IONBF, 0);
-    printf("tinywt P4: concurrency / hazard\n");
-    RUN(test_concurrent_l1);
-    RUN(test_ref_state_and_hazard);
-    RUN(test_reader_under_eviction);
-    return harness_report();
 }

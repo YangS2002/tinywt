@@ -24,8 +24,6 @@
  *   4. 尾部截断（半条记录）
  *   5. 中间损坏 → CORRUPT
  * -*/
-#define TWT_PROJECT "P3"
-
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -105,229 +103,220 @@ flip_byte(const std::string &path, long off)
 } /* namespace */
 
 /* ---------------------------------------------------------------- 1. 重放 */
-static void
-test_replay()
+TWT_TEST(P3_Wal, Replay, "P3/T3.5 WAL 重放（已提交事务还原到空树）")
 {
-    CASE("P3/T3.5 WAL 重放（已提交事务还原到空树）");
     Fixture fx("p3_wal_replay");
 
     {
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
 
         /* txn 1：写两条 */
-        CHECK_ST(log.txn_begin(1));
-        CHECK_ST(log.put(1, Slice("k1"), Slice("v1")));
-        CHECK_ST(log.put(1, Slice("k2"), Slice("v2")));
-        CHECK_ST(log.txn_commit(1));
+        ASSERT_EQ(S_OK, log.txn_begin(1));
+        ASSERT_EQ(S_OK, log.put(1, Slice("k1"), Slice("v1")));
+        ASSERT_EQ(S_OK, log.put(1, Slice("k2"), Slice("v2")));
+        ASSERT_EQ(S_OK, log.txn_commit(1));
 
         /* txn 2：删一条、加一条 */
-        CHECK_ST(log.txn_begin(2));
-        CHECK_ST(log.remove(2, Slice("k1")));
-        CHECK_ST(log.put(2, Slice("k3"), Slice("v3")));
-        CHECK_ST(log.txn_commit(2));
+        ASSERT_EQ(S_OK, log.txn_begin(2));
+        ASSERT_EQ(S_OK, log.remove(2, Slice("k1")));
+        ASSERT_EQ(S_OK, log.put(2, Slice("k3"), Slice("v3")));
+        ASSERT_EQ(S_OK, log.txn_commit(2));
 
-        CHECK(log.last_lsn() > 0);
-        CHECK(log.record_count() >= 6); /* 每次 API 调用至少一条记录 */
-        CHECK_ST(log.close());
+        EXPECT_GT(log.last_lsn(), Lsn(0));
+        EXPECT_GE(log.record_count(), size_t(6)) << "每次 API 调用至少一条记录";
+        ASSERT_EQ(S_OK, log.close());
     }
 
     /* 换一个全新的 Btree 当「崩溃后重开」的数据文件 */
     {
         Btree bt;
-        CHECK_ST(bt.open(fx.dbpath_, small_cfg()));
+        ASSERT_EQ(S_OK, bt.open(fx.dbpath_, small_cfg()));
 
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
-        CHECK_ST(log.replay(bt));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.replay(bt)) << "重放失败";
 
         Val out;
-        CHECK_RC(bt.get(Slice("k1"), out), S_NOTFOUND); /* txn 2 里的 remove 生效 */
-        CHECK_ST(bt.get(Slice("k2"), out));
-        CHECK(sv(out) == "v2");
-        CHECK_ST(bt.get(Slice("k3"), out));
-        CHECK(sv(out) == "v3");
+        EXPECT_EQ(S_NOTFOUND, bt.get(Slice("k1"), out)) << "txn 2 里的 remove 没有生效";
+        ASSERT_EQ(S_OK, bt.get(Slice("k2"), out));
+        EXPECT_EQ("v2", sv(out));
+        ASSERT_EQ(S_OK, bt.get(Slice("k3"), out));
+        EXPECT_EQ("v3", sv(out));
 
-        CHECK_ST(log.close());
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, log.close());
+        EXPECT_EQ(S_OK, bt.close());
     }
 }
 
 /* ---------------------------------------------------------------- 2. 未提交丢弃 */
-static void
-test_uncommitted_discarded()
+TWT_TEST(P3_Wal, UncommittedDiscarded, "P3/T3.5 未提交丢弃（没有 COMMIT 的事务不进数据文件）")
 {
-    CASE("P3/T3.5 未提交丢弃（没有 COMMIT 的事务不进数据文件）");
     Fixture fx("p3_wal_uncommitted");
 
     {
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
 
         /* 已提交 */
-        CHECK_ST(log.txn_begin(1));
-        CHECK_ST(log.put(1, Slice("k-ok"), Slice("yes")));
-        CHECK_ST(log.txn_commit(1));
+        ASSERT_EQ(S_OK, log.txn_begin(1));
+        ASSERT_EQ(S_OK, log.put(1, Slice("k-ok"), Slice("yes")));
+        ASSERT_EQ(S_OK, log.txn_commit(1));
 
         /* 写完了但没提交（进程在这里被杀） */
-        CHECK_ST(log.txn_begin(2));
-        CHECK_ST(log.put(2, Slice("k-lost"), Slice("no")));
-        CHECK_ST(log.put(2, Slice("k-ok"), Slice("overwritten-by-ghost")));
+        ASSERT_EQ(S_OK, log.txn_begin(2));
+        ASSERT_EQ(S_OK, log.put(2, Slice("k-lost"), Slice("no")));
+        ASSERT_EQ(S_OK, log.put(2, Slice("k-ok"), Slice("overwritten-by-ghost")));
         /* 故意不写 COMMIT */
 
         /* 提交记录写在后面的事务，不能因为「前面有个没提交的」就被连累 */
-        CHECK_ST(log.txn_begin(3));
-        CHECK_ST(log.put(3, Slice("k-later"), Slice("later")));
-        CHECK_ST(log.txn_commit(3));
+        ASSERT_EQ(S_OK, log.txn_begin(3));
+        ASSERT_EQ(S_OK, log.put(3, Slice("k-later"), Slice("later")));
+        ASSERT_EQ(S_OK, log.txn_commit(3));
 
-        CHECK_ST(log.close());
+        ASSERT_EQ(S_OK, log.close());
     }
 
     {
         Btree bt;
-        CHECK_ST(bt.open(fx.dbpath_, small_cfg()));
+        ASSERT_EQ(S_OK, bt.open(fx.dbpath_, small_cfg()));
 
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
-        CHECK_ST(log.replay(bt));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.replay(bt));
 
         Val out;
-        CHECK_ST(bt.get(Slice("k-ok"), out));
-        CHECK(sv(out) == "yes"); /* 未被幽灵事务覆盖 */
-        CHECK_RC(bt.get(Slice("k-lost"), out), S_NOTFOUND);
-        CHECK_ST(bt.get(Slice("k-later"), out));
-        CHECK(sv(out) == "later");
+        ASSERT_EQ(S_OK, bt.get(Slice("k-ok"), out));
+        EXPECT_EQ("yes", sv(out)) << "已提交的值被未提交事务覆盖了";
+        EXPECT_EQ(S_NOTFOUND, bt.get(Slice("k-lost"), out)) << "未提交事务的数据进了数据文件";
+        ASSERT_EQ(S_OK, bt.get(Slice("k-later"), out));
+        EXPECT_EQ("later", sv(out)) << "提交记录在后的事务被连累了";
 
-        CHECK_ST(log.close());
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, log.close());
+        EXPECT_EQ(S_OK, bt.close());
     }
 }
 
 /* ---------------------------------------------------------------- 3. 截断 */
-static void
-test_truncate_upto()
+TWT_TEST(P3_Wal, TruncateUpto, "P3/T3.5 截断（ckpt 之后日志只留 >= ckpt_lsn）")
 {
-    CASE("P3/T3.5 截断（ckpt 之后日志只留 >= ckpt_lsn）");
     Fixture fx("p3_wal_trunc");
     Lsn ckpt_lsn = 0;
     u64 before = 0;
 
     {
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
 
         /* 这一段视为「已经 checkpoint 落盘」的历史 */
-        CHECK_ST(log.txn_begin(1));
-        CHECK_ST(log.put(1, Slice("k-old"), Slice("in-page")));
-        CHECK_ST(log.txn_commit(1));
+        ASSERT_EQ(S_OK, log.txn_begin(1));
+        ASSERT_EQ(S_OK, log.put(1, Slice("k-old"), Slice("in-page")));
+        ASSERT_EQ(S_OK, log.txn_commit(1));
         ckpt_lsn = log.last_lsn();
 
         /* 这一段是 checkpoint 之后才发生的，必须留着 */
-        CHECK_ST(log.txn_begin(2));
-        CHECK_ST(log.put(2, Slice("k-new"), Slice("in-log")));
-        CHECK_ST(log.txn_commit(2));
+        ASSERT_EQ(S_OK, log.txn_begin(2));
+        ASSERT_EQ(S_OK, log.put(2, Slice("k-new"), Slice("in-log")));
+        ASSERT_EQ(S_OK, log.txn_commit(2));
 
         before = log.record_count();
-        CHECK(ckpt_lsn > 0);
+        EXPECT_GT(ckpt_lsn, Lsn(0));
 
-        CHECK_ST(log.truncate_upto(ckpt_lsn));
-        CHECK(log.record_count() < before);
-        CHECK(log.record_count() == 3); /* 只剩 txn 2 的 begin/put/commit */
-        CHECK_ST(log.close());
+        ASSERT_EQ(S_OK, log.truncate_upto(ckpt_lsn));
+        EXPECT_LT(log.record_count(), before) << "截断之后条数没有变少";
+        EXPECT_EQ(size_t(3), log.record_count()) << "只剩 txn 2 的 begin/put/commit";
+        EXPECT_EQ(S_OK, log.close());
     }
 
     /* 裁剪必须落到磁盘：重开日志文件，条数不能「长回来」 */
     {
         Btree bt;
-        CHECK_ST(bt.open(fx.dbpath_, small_cfg()));
+        ASSERT_EQ(S_OK, bt.open(fx.dbpath_, small_cfg()));
 
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
-        CHECK_ST(log.replay(bt));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.replay(bt));
 
         Val out;
-        CHECK_ST(bt.get(Slice("k-new"), out));
-        CHECK(sv(out) == "in-log");
+        ASSERT_EQ(S_OK, bt.get(Slice("k-new"), out));
+        EXPECT_EQ("in-log", sv(out));
         /*
          * k-old 不在了 —— 这是对的：它的数据已经在 checkpoint 写进数据页里，
          * 日志不再需要它。重放到空树上没有它，恰好证明「日志确实被裁剪了」。
          */
-        CHECK_RC(bt.get(Slice("k-old"), out), S_NOTFOUND);
+        EXPECT_EQ(S_NOTFOUND, bt.get(Slice("k-old"), out)) << "日志没有被真的裁剪";
 
-        CHECK_ST(log.close());
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, log.close());
+        EXPECT_EQ(S_OK, bt.close());
     }
 }
 
 /* ---------------------------------------------------------------- 4. 尾部半条 */
-static void
-test_tail_truncation()
+TWT_TEST(P3_Wal, TailTruncation, "P3/T3.5 尾部截断（半条记录 = 正常崩溃，返回 OK）")
 {
-    CASE("P3/T3.5 尾部截断（半条记录 = 正常崩溃，返回 OK）");
     Fixture fx("p3_wal_tail");
     long size = 0;
 
     {
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
 
-        CHECK_ST(log.txn_begin(1));
-        CHECK_ST(log.put(1, Slice("k1"), Slice("v1")));
-        CHECK_ST(log.txn_commit(1));
+        ASSERT_EQ(S_OK, log.txn_begin(1));
+        ASSERT_EQ(S_OK, log.put(1, Slice("k1"), Slice("v1")));
+        ASSERT_EQ(S_OK, log.txn_commit(1));
 
-        CHECK_ST(log.txn_begin(2));
-        CHECK_ST(log.put(2, Slice("k2"), Slice("v2")));
-        CHECK_ST(log.txn_commit(2));
+        ASSERT_EQ(S_OK, log.txn_begin(2));
+        ASSERT_EQ(S_OK, log.put(2, Slice("k2"), Slice("v2")));
+        ASSERT_EQ(S_OK, log.txn_commit(2));
 
-        CHECK_ST(log.close());
+        ASSERT_EQ(S_OK, log.close());
     }
 
     /* 砍掉最后 3 个字节：最后一条提到一半，进程死了 */
     {
         std::error_code ec;
         size = (long)fs::file_size(fx.logpath, ec);
-        CHECK(!ec && size > 8);
+        EXPECT_FALSE(ec);
+        ASSERT_GT(size, 8) << "日志小得不像写进去过";
         fs::resize_file(fx.logpath, (std::uintmax_t)(size - 3), ec);
-        CHECK(!ec);
+        EXPECT_FALSE(ec);
     }
 
     {
         Btree bt;
-        CHECK_ST(bt.open(fx.dbpath_, small_cfg()));
+        ASSERT_EQ(S_OK, bt.open(fx.dbpath_, small_cfg()));
 
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
         /* 关键：尾部不完整不是错误 */
-        CHECK_ST(log.replay(bt));
+        EXPECT_EQ(S_OK, log.replay(bt)) << "尾部半条被当成损坏了（崩溃后应该能起来）";
 
         Val out;
-        CHECK_ST(bt.get(Slice("k1"), out));
-        CHECK(sv(out) == "v1");
+        ASSERT_EQ(S_OK, bt.get(Slice("k1"), out));
+        EXPECT_EQ("v1", sv(out));
         /* txn 2 的 COMMIT 被砍掉了 → 整个 txn 2 视为未提交，丢弃 */
-        CHECK_RC(bt.get(Slice("k2"), out), S_NOTFOUND);
+        EXPECT_EQ(S_NOTFOUND, bt.get(Slice("k2"), out)) << "半截事务被重放了";
 
-        CHECK_ST(log.close());
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, log.close());
+        EXPECT_EQ(S_OK, bt.close());
     }
 }
 
 /* ---------------------------------------------------------------- 5. 中间损坏 */
-static void
-test_mid_file_corruption()
+TWT_TEST(P3_Wal, MidFileCorruption, "P3/T3.5 中间损坏 → CORRUPT（不是尾截断）")
 {
-    CASE("P3/T3.5 中间损坏 → CORRUPT（不是尾截断）");
     Fixture fx("p3_wal_corrupt");
 
     {
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
         for (u64 t = 1; t <= 3; ++t) {
-            CHECK_ST(log.txn_begin(t));
+            ASSERT_EQ(S_OK, log.txn_begin(t));
             std::string k = "k" + std::to_string(t);
-            CHECK_ST(log.put(t, Slice(k), Slice("v")));
-            CHECK_ST(log.txn_commit(t));
+            ASSERT_EQ(S_OK, log.put(t, Slice(k), Slice("v")));
+            ASSERT_EQ(S_OK, log.txn_commit(t));
         }
-        CHECK_ST(log.close());
+        ASSERT_EQ(S_OK, log.close());
     }
 
     /*
@@ -335,27 +324,24 @@ test_mid_file_corruption()
      * 偏移 4..7 是 crc）。这样 len 仍然可读 —— 解析器能跳到下一条完整记录，
      * 从而分辨出「损坏在中间」而不是「尾部截断」。
      */
-    CHECK(flip_byte(fx.logpath, 6));
+    EXPECT_TRUE(flip_byte(fx.logpath, 6)) << "改不动日志文件（测试自身的问题）";
 
     {
         Btree bt;
-        CHECK_ST(bt.open(fx.dbpath_, small_cfg()));
+        ASSERT_EQ(S_OK, bt.open(fx.dbpath_, small_cfg()));
 
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
-        CHECK_RC(log.replay(bt), S_CORRUPT);
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
+        EXPECT_EQ(S_CORRUPT, log.replay(bt)) << "中间损坏被当成尾截断放过了";
 
-        CHECK_ST(log.close());
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, log.close());
+        EXPECT_EQ(S_OK, bt.close());
     }
 }
 
 /* ---------------------------------------------------------------- 6. 随机 crash ×4 */
-static void
-test_random_crash()
+TWT_TEST(P3_Wal, RandomCrash, "P3/T3.5 随机 crash ×4 种子（状态必须等于某个已提交前缀）")
 {
-    CASE("P3/T3.5 随机 crash ×4 种子（状态必须等于某个已提交前缀）");
-
     struct ROp {
         bool remove;
         std::string key, val;
@@ -370,7 +356,7 @@ test_random_crash()
         /* --- 造日志：70% 提交，30% 半途而废；另有一段只出现在未提交事务里的键 --- */
         {
             LogManager log;
-            CHECK_ST(log.open(fx.logpath));
+            ASSERT_EQ(S_OK, log.open(fx.logpath));
 
             std::mt19937 rng((unsigned)(seed * 7919));
             u64 txnid = 1;
@@ -379,53 +365,55 @@ test_random_crash()
                 const bool commit = (rng() % 100) < 70;
                 const int nops = 1 + (int)(rng() % 3);
 
-                CHECK_ST(log.txn_begin(txnid));
+                ASSERT_EQ(S_OK, log.txn_begin(txnid));
                 for (int o = 0; o < nops; ++o) {
                     const unsigned kind = rng() % 100;
                     if (kind < 75) {
                         const std::string k = "c" + std::to_string(rng() % 10);
                         const std::string v =
                           "v" + std::to_string(txnid) + "_" + std::to_string(o);
-                        CHECK_ST(log.put(txnid, Slice(k), Slice(v)));
+                        ASSERT_EQ(S_OK, log.put(txnid, Slice(k), Slice(v)));
                         if (commit)
                             seq.push_back({false, k, v});
                     } else if (kind < 90) {
                         const std::string k = "c" + std::to_string(rng() % 10);
-                        CHECK_ST(log.remove(txnid, Slice(k)));
+                        ASSERT_EQ(S_OK, log.remove(txnid, Slice(k)));
                         if (commit)
                             seq.push_back({true, k, ""});
                     } else {
                         /* 只出现在未提交事务里的键：重放后必须一个都不存在 */
                         const std::string k = "u" + std::to_string(rng() % 8);
-                        CHECK_ST(log.put(txnid, Slice(k), Slice("ghost")));
+                        ASSERT_EQ(S_OK, log.put(txnid, Slice(k), Slice("ghost")));
                     }
                 }
                 if (commit) {
-                    CHECK_ST(log.txn_commit(txnid));
+                    ASSERT_EQ(S_OK, log.txn_commit(txnid));
                     txn_end.push_back(seq.size());
                 }
             }
-            CHECK_ST(log.close());
+            ASSERT_EQ(S_OK, log.close());
         }
 
         /* --- 在随机位置砍断日志：模拟进程在写日志时被杀 --- */
         {
             std::error_code ec;
             const auto sz = fs::file_size(fx.logpath, ec);
-            CHECK(!ec && sz > 32);
+            EXPECT_FALSE(ec);
+            ASSERT_GT(sz, 32u);
             const auto third = (std::uintmax_t)(sz / 3);
             const auto cut = third + ((std::uintmax_t)seed * 131) % third;
-            CHECK(cut > 0 && cut < sz);
+            EXPECT_GT(cut, 0u);
+            EXPECT_LT(cut, sz);
             fs::resize_file(fx.logpath, cut, ec);
-            CHECK(!ec);
+            EXPECT_FALSE(ec);
         }
 
         Btree bt;
-        CHECK_ST(bt.open(fx.dbpath_, small_cfg()));
+        ASSERT_EQ(S_OK, bt.open(fx.dbpath_, small_cfg()));
 
         LogManager log;
-        CHECK_ST(log.open(fx.logpath));
-        CHECK_ST(log.replay(bt)); /* 尾部半条是正常崩溃 */
+        ASSERT_EQ(S_OK, log.open(fx.logpath));
+        ASSERT_EQ(S_OK, log.replay(bt)) << "尾部半条是正常崩溃，不该报错";
 
         /* --- 不变量 1：未提交的键一个都不能出现 --- */
         int ghost = 0;
@@ -434,7 +422,7 @@ test_random_crash()
             if (bt.get(Slice("u" + std::to_string(k)), out) != S_NOTFOUND)
                 ++ghost;
         }
-        CHECK(ghost == 0);
+        EXPECT_EQ(0, ghost) << "seed=" << seed << "：未提交事务的键出现在数据文件里";
 
         /*
          * --- 不变量 2：重放后的状态必须等于「前 c 个已提交事务」的后像 ---
@@ -468,23 +456,9 @@ test_random_crash()
         bool matched = false;
         for (size_t c = 0; c <= txn_end.size() && !matched; ++c)
             matched = matches(c);
-        CHECK(matched);
+        EXPECT_TRUE(matched) << "seed=" << seed << "：重放结果不等于任何「已提交前缀」";
 
-        CHECK_ST(log.close());
-        CHECK_ST(bt.close());
+        EXPECT_EQ(S_OK, log.close());
+        EXPECT_EQ(S_OK, bt.close());
     }
-}
-
-int
-main()
-{
-    setvbuf(stdout, nullptr, _IONBF, 0);
-    printf("tinywt P3: write-ahead log\n");
-    RUN(test_replay);
-    RUN(test_uncommitted_discarded);
-    RUN(test_truncate_upto);
-    RUN(test_tail_truncation);
-    RUN(test_mid_file_corruption);
-    RUN(test_random_crash);
-    return harness_report();
 }

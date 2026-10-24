@@ -7,6 +7,7 @@
 #   make build            # 只编译
 #   make grade            # 逐项打分（未实现记 TODO，不中断）
 #   make p2-test          # 只跑某一个 Project
+#   make p2-test FILTER='P2_Btree.*'   # 只跑匹配的测例（透传 --gtest_filter）
 #   make todo             # 我这部分要写哪些函数？（按 Task 分组，带 file:line）
 #   make check-docs       # 文档里的数字/路径/链接与代码对账（改完文档跑一次）
 #   make format           # 按根目录 .clang-format 格式化 src/ include/ test/
@@ -60,11 +61,13 @@ build: configure
 
 # ---------------------------------------------------------------- 测试
 # 每个 Project 一个或多个二进制；任一 FAIL 就非零退出。
+# FILTER= 透传给 GoogleTest 的 --gtest_filter（按 Suite.Name 通配），
+# 调单个测例时不用再记二进制路径和 ASCII 测试名。
 test: build
 	@rc=0; for b in $(BUILD)/bin/*_test; do \
 	  [ -x "$$b" ] || continue; \
 	  echo; echo "########## $$b"; \
-	  ./$$b || rc=1; \
+	  ./$$b $(if $(FILTER),--gtest_filter='$(FILTER)') || rc=1; \
 	done; \
 	echo; \
 	if [ $$rc -eq 0 ]; then echo "ALL TESTS PASSED"; else echo "SOME TESTS FAILED"; fi; \
@@ -75,7 +78,7 @@ p%-test: build
 	@found=0; for b in $(BUILD)/bin/p$*_*_test; do \
 	  [ -x "$$b" ] || continue; \
 	  found=1; echo; echo "########## $$b"; \
-	  ./$$b || exit 1; \
+	  ./$$b $(if $(FILTER),--gtest_filter='$(FILTER)') || exit 1; \
 	done; \
 	[ $$found -eq 1 ] || { echo "没有 P$* 的测试二进制"; exit 2; }
 

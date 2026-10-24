@@ -11,9 +11,11 @@
 #   include/tinywt/<module>/*.h   公共头（学生要读，不要改布局）
 #   src/<module>/*.cpp            实现（学生要写函数体）
 #   src/api/*.cpp                 C ABI 层；capi.h 是私有头，不对外暴露
-#   test/<project>/*_test.cpp     每个评分项一个测试二进制
+#   test/<project>/*_test.cpp     每个 Project 一个测试二进制（GoogleTest 写测例）
+#   test/support/harness.hpp      GoogleTest 适配层：BEGIN / RESULT / SCORE + 崩溃看门狗
 #   test/contract/abi_probe.c     编译期 + 链接期的 ABI 合同
 #   third_party/wiredtiger/       真 WiredTiger 头文件（合同来源）
+#   third_party/googletest/       测试框架源码（内置，不依赖系统包）
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -180,6 +182,23 @@ set_target_properties(abi_link_check PROPERTIES
 if(TINYWT_BUILD_TESTS)
   enable_testing()
 
+  # -------------------------------------------------------------- GoogleTest
+  # 测试框架用 GoogleTest，但源码**内置**在 third_party/googletest：
+  #   - 这台机器 apt 装 libgtest-dev 要 sudo（本项目要求 clone 下来就能 make）
+  #   - 不走 find_package(GTest)，同一个仓库在任何机器上编出来都一样
+  #   - 也不跑上游顶层 CMakeLists：它会把 googlemock 一起 add_subdirectory，
+  #     而我们不用 mock。融合编译只编 gtest-all.cc，一个静态库零外部依赖。
+  add_library(twt_gtest STATIC
+      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest/src/gtest-all.cc)
+  target_include_directories(twt_gtest
+      PUBLIC
+          ${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest/include
+      PRIVATE
+          # gtest-all.cc 里是 #include "src/..."，所以要给到 gtest 根目录
+          ${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest)
+  target_link_libraries(twt_gtest PUBLIC Threads::Threads)
+  target_compile_options(twt_gtest PRIVATE -w)  # 上游代码，不套本项目的告警策略
+
   set(TINYWT_TESTS
       p0_defs:test/p0/defs_test.cpp
       p1_block_cell:test/p1/block_cell_test.cpp
@@ -198,9 +217,18 @@ if(TINYWT_BUILD_TESTS)
     list(GET parts 0 tname)
     list(GET parts 1 tsrc)
 
-    add_executable(${tname}_test ${tsrc})
+    # gtest_main.cpp 提供 main()：挂监听器、改 flag、调 RUN_ALL_TESTS。
+    # 它每个 target 编一遍（就一个 TU），因为 TWT_PROJECT 是 target 的属性。
+    add_executable(${tname}_test ${tsrc} test/support/gtest_main.cpp)
     target_include_directories(${tname}_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
-    target_link_libraries(${tname}_test PRIVATE tinywt)
+    target_link_libraries(${tname}_test PRIVATE tinywt twt_gtest)
+
+    # Project 标签从 target 名推：p3_txn → P3。BEGIN/RESULT 行的第一列，
+    # grade.py 靠它分组算分，check_docs.py 靠它把测例归到 Task 上。
+    string(SUBSTRING ${tname} 0 2 _proj_lower)
+    string(TOUPPER ${_proj_lower} _proj)
+    target_compile_definitions(${tname}_test PRIVATE TWT_PROJECT="${_proj}")
+
     target_compile_options(${tname}_test PRIVATE
         -Wall -Wextra -Wno-unused-function -Wno-unused-parameter)
 

@@ -136,6 +136,11 @@ BusTub 写的是 "You must not look at another student's solution"。这里是�
 └─────────────────────────────────┘
 ```
 
+> 只想跑一条测例：`make p2-test FILTER='P2_Btree.SplitVsStdMap'`（透传 GoogleTest 的
+> `--gtest_filter`，`*` 是通配；`build/bin/p2_btree_test --gtest_list_tests` 可以列名字）。
+> 测例用 `TWT_TEST(Suite, Name, "Px/Ty 可读名字")` 写，断言用 `EXPECT_*` / `ASSERT_*`：
+> 前者失败后继续跑（一条测例能报出多个问题），后者失败立刻结束（后面依赖它，继续跑只会崩）。
+
 **填满 ≠ 通过。** `make todo` 的输出空了，`make grade` 还红着，这是常态 ——
 它说明你的某个基础件（多半是 P0 的 varint 或 P1 的 extent 回收）写错了，而不是
 "这以后所有的 Task 都错了"。

@@ -5,8 +5,6 @@
  *   Task 1.2  extent 三表（alloc/avail/discard）+ 超级块 + addr cookie
  *   Task 1.3  cell 编解码 + key 前缀压缩
  * -*/
-#define TWT_PROJECT "P1"
-
 #include <cstring>
 #include <vector>
 
@@ -17,23 +15,20 @@
 using namespace twt;
 
 /* ---------------------------------------------------------------- T1.3 */
-static void
-test_cell()
+TWT_TEST(P1_BlockCell, CellCodec, "P1/T1.3 cell 编解码 (对标 src/include/cell.h)")
 {
-    CASE("P1/T1.3 cell 编解码 (对标 src/include/cell.h)");
-
     /* short key，无前缀 */
     {
         std::vector<u8> b;
         std::string k = "hello";
         cell_pack_key(b, Slice(k), 0);
-        CHECK(b[0] == (CELL_KEY_SHORT | (u8)(k.size() << CELL_SHORT_SHIFT)));
+        EXPECT_EQ((u8)(CELL_KEY_SHORT | (u8)(k.size() << CELL_SHORT_SHIFT)), b[0]);
         Cell c;
-        CHECK_ST(cell_unpack(b.data(), b.size(), c));
-        CHECK(c.is_key());
-        CHECK(c.prefix == 0);
-        CHECK(c.data.str() == "hello");
-        CHECK(c.total == b.size());
+        ASSERT_EQ(S_OK, cell_unpack(b.data(), b.size(), c)) << "short key 解不开";
+        EXPECT_TRUE(c.is_key());
+        EXPECT_EQ(size_t(0), c.prefix);
+        EXPECT_EQ("hello", c.data.str());
+        EXPECT_EQ(b.size(), c.total);
     }
 
     /* 长 key（> 63），带前缀压缩 */
@@ -43,14 +38,14 @@ test_cell()
         std::vector<u8> b;
         cell_pack_key(b, Slice(cur), prev.size());
         Cell c;
-        CHECK_ST(cell_unpack(b.data(), b.size(), c));
-        CHECK(c.prefix == prev.size());
-        CHECK(c.data.size() == 50);
-        CHECK(c.total == b.size());
+        ASSERT_EQ(S_OK, cell_unpack(b.data(), b.size(), c)) << "长 key 解不开";
+        EXPECT_EQ(prev.size(), c.prefix);
+        EXPECT_EQ(size_t(50), c.data.size());
+        EXPECT_EQ(b.size(), c.total);
         /* 还原整键 */
         Key full(prev.begin(), prev.end());
         full.insert(full.end(), c.data.data(), c.data.data() + c.data.size());
-        CHECK(Slice(full.data(), full.size()).cmp(Slice(cur)) == 0);
+        EXPECT_EQ(0, Slice(full.data(), full.size()).cmp(Slice(cur))) << "前缀还原后的整键不对";
     }
 
     /* short value / long value */
@@ -59,15 +54,15 @@ test_cell()
         std::string v = "v";
         cell_pack_value(b, Slice(v));
         Cell c;
-        CHECK_ST(cell_unpack(b.data(), b.size(), c));
-        CHECK(c.is_value());
-        CHECK(c.data.str() == "v");
+        ASSERT_EQ(S_OK, cell_unpack(b.data(), b.size(), c));
+        EXPECT_TRUE(c.is_value());
+        EXPECT_EQ("v", c.data.str());
 
         std::string big(5000, 'x');
         b.clear();
         cell_pack_value(b, Slice(big));
-        CHECK_ST(cell_unpack(b.data(), b.size(), c));
-        CHECK(c.data.size() == 5000);
+        ASSERT_EQ(S_OK, cell_unpack(b.data(), b.size(), c));
+        EXPECT_EQ(size_t(5000), c.data.size());
     }
 
     /* addr cell */
@@ -80,87 +75,85 @@ test_cell()
         a.cksum = 0xDEADBEEFu;
         cell_pack_addr(b, a, 77, CELL_ADDR_LEAF_NO);
         Cell c;
-        CHECK_ST(cell_unpack(b.data(), b.size(), c));
-        CHECK(c.is_addr());
+        ASSERT_EQ(S_OK, cell_unpack(b.data(), b.size(), c));
+        EXPECT_TRUE(c.is_addr());
         size_t i = 0;
         u64 v = 0;
         i += unpack_uint(c.data.data() + i, c.data.size() - i, v);
-        CHECK(v == 4096);
+        EXPECT_EQ(u64(4096), v);
         i += unpack_uint(c.data.data() + i, c.data.size() - i, v);
-        CHECK(v == 700);
+        EXPECT_EQ(u64(700), v);
         i += unpack_uint(c.data.data() + i, c.data.size() - i, v);
-        CHECK(v == 8192);
+        EXPECT_EQ(u64(8192), v);
         i += unpack_uint(c.data.data() + i, c.data.size() - i, v);
-        CHECK(v == 0xDEADBEEFu);
+        EXPECT_EQ(u64(0xDEADBEEFu), v);
         i += unpack_uint(c.data.data() + i, c.data.size() - i, v);
-        CHECK(v == 77);
+        EXPECT_EQ(u64(77), v);
     }
 }
 
-/* ---------------------------------------------------------------- T1.1 + T1.2 */
-static void
-test_block()
+/* ---------------------------------------------------------------- T1.1 */
+TWT_TEST(P1_BlockCell, BlockIO, "P1/T1.1 块读写 + 校验")
 {
-    CASE("P1/T1.1 块读写 + 校验");
     std::string p = dbpath("p1_block.wt");
     rmpath(p);
 
     BlockManager bm;
-    CHECK_ST(bm.open(p, 4096));
+    ASSERT_EQ(S_OK, bm.open(p, 4096)) << "BlockManager::open 失败";
 
     /* offset 0 必须是非法偏移：首块留给描述块 */
     std::vector<u8> img(1000, 0x5A);
     Addr a1, a2;
-    CHECK_ST(bm.write(img.data(), img.size(), a1));
-    CHECK(a1.off != 0);
-    CHECK(a1.alloc % 4096 == 0); /* 分配单元对齐 */
-    CHECK(a1.size == img.size()); /* 镜像长度是精确值 */
-    CHECK(a1.cksum == crc32(img.data(), img.size()));
+    ASSERT_EQ(S_OK, bm.write(img.data(), img.size(), a1)) << "第一次写块失败";
+    EXPECT_NE(0u, a1.off) << "offset 0 是非法偏移（首块留给描述块）";
+    EXPECT_EQ(0u, a1.alloc % 4096) << "分配单元必须按 alloc_size 对齐";
+    EXPECT_EQ(img.size(), a1.size) << "Addr::size 是镜像精确长度";
+    EXPECT_EQ(crc32(img.data(), img.size()), a1.cksum) << "cksum 不是对镜像算的 crc32";
 
     std::vector<u8> back;
-    CHECK_ST(bm.read(a1, back));
-    CHECK(back.size() == img.size());
-    CHECK(std::memcmp(back.data(), img.data(), img.size()) == 0);
+    ASSERT_EQ(S_OK, bm.read(a1, back)) << "刚写的块读不回来";
+    EXPECT_EQ(img.size(), back.size());
+    EXPECT_EQ(0, std::memcmp(back.data(), img.data(), img.size())) << "读回来的字节和写进去的不一样";
 
     /* 故意用错误的 cksum 读 → 必须报 CORRUPT */
     Addr bad = a1;
     bad.cksum ^= 0xFFu;
-    CHECK(bm.read(bad, back) == S_CORRUPT);
+    EXPECT_EQ(S_CORRUPT, bm.read(bad, back)) << "校验和对不上必须报 CORRUPT";
 
     /* 分配第二个块，偏移必须不同且不重叠 */
     std::vector<u8> img2(5000, 0x33);
-    CHECK_ST(bm.write(img2.data(), img2.size(), a2));
-    CHECK(a2.off != a1.off);
-    CHECK((a2.off >= a1.off + a1.alloc) || (a1.off >= a2.off + a2.alloc));
+    ASSERT_EQ(S_OK, bm.write(img2.data(), img2.size(), a2)) << "第二次写块失败";
+    EXPECT_NE(a1.off, a2.off);
+    EXPECT_TRUE((a2.off >= a1.off + a1.alloc) || (a1.off >= a2.off + a2.alloc))
+      << "两个块重叠了：a1=[" << a1.off << "," << a1.off + a1.alloc << ") a2=[" << a2.off << ","
+      << a2.off + a2.alloc << ")";
 
-    CHECK_ST(bm.close());
+    EXPECT_EQ(S_OK, bm.close());
     rmpath(p);
 }
 
 /* ---------------------------------------------------------------- T1.2 */
-static void
-test_extent_and_super()
+TWT_TEST(P1_BlockCell, ExtentSuper, "P1/T1.2 extent + 超级块")
 {
-    CASE("P1/T1.2 extent + 超级块");
     std::string p = dbpath("p1_block.wt");
     rmpath(p);
 
     BlockManager bm;
-    CHECK_ST(bm.open(p, 4096));
+    ASSERT_EQ(S_OK, bm.open(p, 4096)) << "BlockManager::open 失败";
 
     std::vector<u8> img(1000, 0x5A);
     Addr a1, a2;
-    CHECK_ST(bm.write(img.data(), img.size(), a1));
+    ASSERT_EQ(S_OK, bm.write(img.data(), img.size(), a1));
     std::vector<u8> img2(5000, 0x33);
-    CHECK_ST(bm.write(img2.data(), img2.size(), a2));
+    ASSERT_EQ(S_OK, bm.write(img2.data(), img2.size(), a2));
 
     /* 释放 → 进 discard，checkpoint 后回到 avail */
-    CHECK_ST(bm.free_block(a1));
-    CHECK(bm.discard().size() == 1);
+    ASSERT_EQ(S_OK, bm.free_block(a1));
+    EXPECT_EQ(size_t(1), bm.discard().size()) << "释放的块应先落到 discard 表";
     std::vector<Extent> e;
-    CHECK_ST(bm.checkpoint_extents(e));
-    CHECK(bm.discard().empty());
-    CHECK(bm.avail_bytes() > 0);
+    ASSERT_EQ(S_OK, bm.checkpoint_extents(e));
+    EXPECT_TRUE(bm.discard().empty()) << "checkpoint 之后 discard 必须清空";
+    EXPECT_GT(bm.avail_bytes(), 0u) << "被释放的 extent 应回到 avail";
 
     /* 超级块往返 */
     SuperBlock sb;
@@ -169,26 +162,15 @@ test_extent_and_super()
     sb.root_addr = a2;
     sb.file_size = bm.file_size();
     sb.avail = e;
-    CHECK_ST(bm.write_super(sb));
+    ASSERT_EQ(S_OK, bm.write_super(sb)) << "写超级块失败";
 
     SuperBlock sb2;
     sb2.alloc_size = 4096;
-    CHECK_ST(bm.read_super(sb2));
-    CHECK(sb2.root_page_id == 42);
-    CHECK(sb2.next_page_id == 43);
-    CHECK(sb2.root_addr.off == a2.off);
+    ASSERT_EQ(S_OK, bm.read_super(sb2)) << "读超级块失败";
+    EXPECT_EQ(u64(42), sb2.root_page_id);
+    EXPECT_EQ(u64(43), sb2.next_page_id);
+    EXPECT_EQ(a2.off, sb2.root_addr.off);
 
-    CHECK_ST(bm.close());
+    EXPECT_EQ(S_OK, bm.close());
     rmpath(p);
-}
-
-int
-main()
-{
-    setvbuf(stdout, nullptr, _IONBF, 0);
-    printf("tinywt P1: block manager + cell\n");
-    RUN(test_block);
-    RUN(test_extent_and_super);
-    RUN(test_cell);
-    return harness_report();
 }
